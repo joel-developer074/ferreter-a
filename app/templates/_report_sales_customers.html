@@ -1,0 +1,22 @@
+{# Detalle de ventas confirmadas; los descuentos son los guardados en cada venta. #}
+<h3>Ventas y clientes</h3>
+<div class="report-sales-scroll">
+<table class="report-sales-customers">
+  <thead><tr><th>Ticket / hora</th><th>Cliente</th><th>Productos y descuento aplicado</th><th>Total</th></tr></thead>
+  <tbody>
+  {% for sale in day.sales %}
+    <tr>
+      <td><a href="{{url_for('sale_receipt',sale_id=sale.id)}}">N.º {{sale.id}}</a><small>{{sale.created_at.strftime('%H:%M')}}</small></td>
+      <td>{% if sale.customer %}<strong>{{sale.customer.last_name+', '+sale.customer.first_name if sale.customer.first_name else sale.customer.name}}</strong>{% if sale.customer.dni %}<small>DNI {{sale.customer.dni}}</small>{% endif %}{% else %}Sin cliente asignado{% endif %}</td>
+      <td>{% for item in sale.items %}
+        <div class="report-sale-item"><strong>{{item.product.name}}</strong>
+          <small>{{item.sale_quantity if item.sale_quantity is not none else item.quantity}} × {{'Caja' if item.presentation == 'CAJA' else 'Unidad'}}{% if item.discount_percent %} · {{item.discount_percent}}% de descuento{% else %} · Sin descuento{% endif %}</small>
+          <small>Importe: {{item.subtotal|ars}}</small>
+        </div>
+      {% endfor %}</td>
+      <td><strong>{{sale.total|ars}}</strong></td>
+    </tr>
+  {% else %}<tr><td colspan="4">No hubo ventas confirmadas en esta fecha.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
