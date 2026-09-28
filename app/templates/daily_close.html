@@ -1,0 +1,55 @@
+{# Reporte imprimible del cierre diario con productos, pagos y totales. #}
+{% extends 'base.html' %}
+{% block content %}
+<article class="receipt daily-close">
+  <div class="print-actions">
+    <a class="button secondary" href="{{ url_for('sales_report') }}">Volver al resumen</a>
+    <button type="button" class="action-print" onclick="window.print()">Imprimir cierre diario</button>
+  </div>
+
+  <section class="close-header">
+    <h1>CIERRE DIARIO / TICKET Z INTERNO</h1>
+    <p><b>Fecha:</b> {{ day.date.strftime('%d/%m/%Y') }}</p>
+    <p>Generado: {{ generated_at.strftime('%d/%m/%Y %H:%M') }}</p>
+  </section>
+
+  <div class="cards close-cards">
+    <article><span>Ventas confirmadas</span><strong>{{ day.sale_count }}</strong></article>
+    <article><span>Total del día</span><strong>{{ day.total|ars }}</strong></article>
+  </div>
+
+  <h2>Productos vendidos</h2>
+  <table>
+    <thead><tr><th>Código</th><th>Producto</th><th>Presentación</th><th>Cantidad</th><th>Importe</th></tr></thead>
+    <tbody>
+      {% for product in day.products %}
+        <tr>
+          <td>{{ product.code }}</td>
+          <td>{{ product.name }}</td>
+          <td>{{ 'Caja' if product.presentation == 'CAJA' else 'Unidad' }}</td>
+          <td>{{ product.quantity }}</td>
+          <td>{{ product.amount|ars }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5">No hubo ventas confirmadas en esta fecha.</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot><tr><th colspan="4">TOTAL</th><th>{{ day.total|ars }}</th></tr></tfoot>
+  </table>
+
+  <h2>Medios de pago</h2>
+  <table>
+    <thead><tr><th>Medio</th><th>Importe</th></tr></thead>
+    <tbody>
+      {% for method, amount in day.payments %}
+        <tr><td>{{ method.title() }}</td><td>{{ amount|ars }}</td></tr>
+      {% else %}
+        <tr><td colspan="2">Sin pagos registrados.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% include '_report_sales_customers.html' %}
+  <p class="legal-note">Documento interno de control. No válido como comprobante fiscal.</p>
+</article>
+{% endblock %}
