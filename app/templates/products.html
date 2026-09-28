@@ -1,0 +1,8 @@
+{# Catálogo de productos con acciones de administración y control de stock. #}
+{% extends 'base.html' %}{% block content %}
+<div class="title-row"><h1>Productos y stock</h1>{% if current_user.role=='owner' %}<a class="button action-create new-product-button" href="{{url_for('product_new')}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><span>Nuevo producto</span></a>{% endif %}</div>
+<form class="search" id="product-search-form" action="{{url_for('products')}}"><input id="product-search" type="search" aria-label="Buscar productos por nombre o código" aria-controls="product-results" autofocus autocomplete="off" name="q" value="{{query}}" placeholder="Buscar por código o nombre"><button class="action-search">Buscar</button></form>
+<p id="product-search-status" role="status" aria-live="polite"></p>
+<div id="product-results">{% include '_product_table.html' %}</div>
+<script src="{{url_for('static',filename='product-search.js')}}" defer></script>
+{% endblock %}
