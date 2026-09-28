@@ -1,0 +1,64 @@
+{# Resumen de ventas por día y producto con selección de fechas para reportes. #}
+{% extends 'base.html' %}
+{% block content %}
+<div class="title-row">
+  <h1>Resumen de ventas</h1>
+  <form class="date-range-form" method="get" action="{{ url_for('sales_range_report') }}">
+    <label>Desde
+      <input type="date" name="start_date" value="{{ today }}" required>
+    </label>
+    <label>Hasta
+      <input type="date" name="end_date" value="{{ today }}" required>
+    </label>
+    <button type="submit" class="action-print">Imprimir resumen por fecha</button>
+  </form>
+</div>
+
+<div class="cards">
+  <article><span>Total confirmado</span><strong>{{ total|ars }}</strong></article>
+  <article><span>Cantidad de ventas</span><strong>{{ count }}</strong></article>
+</div>
+
+<h2>Totales por medio de pago</h2>
+<table>
+  <thead><tr><th>Medio</th><th>Total</th></tr></thead>
+  <tbody>
+    {% for method, amount in by_payment %}
+      <tr><td>{{ method.title() }}</td><td>{{ amount|ars }}</td></tr>
+    {% else %}
+      <tr><td colspan="2">Sin ventas.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Ventas separadas por día</h2>
+{% for day in daily_summaries %}
+  <section class="daily-summary">
+    <div class="title-row daily-title">
+      <div>
+        <h3>{{ day.date.strftime('%d/%m/%Y') }}</h3>
+        <span>{{ day.sale_count }} venta{% if day.sale_count != 1 %}s{% endif %} · Total {{ day.total|ars }}</span>
+      </div>
+      <a class="button action-print" href="{{ url_for('daily_sales_report', report_date=day.date.strftime('%Y-%m-%d')) }}">Imprimir cierre diario</a>
+    </div>
+    <table>
+      <thead><tr><th>Código</th><th>Producto</th><th>Presentación</th><th>Cantidad vendida</th><th>Importe</th></tr></thead>
+      <tbody>
+        {% for product in day.products %}
+          <tr>
+            <td>{{ product.code }}</td>
+            <td>{{ product.name }}</td>
+            <td>{{ 'Caja' if product.presentation == 'CAJA' else 'Unidad' }}</td>
+            <td>{{ product.quantity }}</td>
+            <td>{{ product.amount|ars }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr><th colspan="4">Total del día</th><th>{{ day.total|ars }}</th></tr></tfoot>
+    </table>
+    {% include '_report_sales_customers.html' %}
+  </section>
+{% else %}
+  <p class="empty-state">Todavía no hay ventas confirmadas.</p>
+{% endfor %}
+{% endblock %}
