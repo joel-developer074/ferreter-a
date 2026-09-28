@@ -1,0 +1,10 @@
+{# Formulario para reponer mercadería y actualizar precios de un producto. #}
+{% extends 'base.html' %}{% block content %}
+<h1>Reposición de producto</h1>
+<p><b>{{product.name}}</b> · Stock actual: {{product.available_units}} unidades{% if product.has_box_presentation %} ({{product.closed_boxes}} cajas y {{product.loose_units}} unidades sueltas){% endif %}</p>
+<form method="post" class="form-grid">
+<label>Precio de compra<input name="purchase_price" type="number" step="0.01" min="0" value="{{form_data.get('purchase_price',product.purchase_price)}}" required></label>
+<label>Precio de venta por unidad<input name="unit_price" type="number" step="0.01" min="0" value="{{form_data.get('unit_price',product.unit_price)}}" required></label>
+{% if product.has_box_presentation %}<label>Precio de venta por caja<input name="box_price" type="number" step="0.01" min="0" value="{{form_data.get('box_price',product.box_price)}}" required></label><label>Cajas a reponer<input name="add_boxes" type="number" min="0" value="{{form_data.get('add_boxes','')}}" placeholder="0"></label><label>Unidades sueltas a reponer<input name="add_units" type="number" min="0" value="{{form_data.get('add_units','')}}" placeholder="0"></label><p class="wide">Cada caja suma {{product.units_per_box}} unidades al stock.</p>{% else %}<label>Unidades a reponer<input name="add_units" type="number" min="1" value="{{form_data.get('add_units','')}}" required></label>{% endif %}
+<div class="form-actions"><button class="action-stock">Confirmar reposición</button><a class="button secondary" href="{{url_for('products')}}">Cancelar</a></div>
+</form>{% endblock %}
