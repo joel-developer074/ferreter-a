@@ -1,0 +1,9 @@
+{# Detalle de un proveedor y los productos asociados a él. #}
+{% extends 'base.html' %}{% block content %}
+<div class="title-row"><div><h1>{{supplier.name}}</h1><p>{{supplier.company_name or 'Proveedor sin empresa especificada'}}</p></div><div class="form-actions"><a class="button action-edit" href="{{url_for('supplier_edit',supplier_id=supplier.id)}}">Editar proveedor</a><a class="button secondary" href="{{url_for('suppliers')}}">Volver</a></div></div>
+<section class="cards"><article><span>Teléfono</span><strong>{{supplier.phone or '—'}}</strong></article><article><span>Correo electrónico</span><strong>{{supplier.email or '—'}}</strong></article><article><span>Productos activos</span><strong>{{products|length}}</strong></article></section>
+{% if supplier.notes %}<section class="panel supplier-notes"><h2>Notas</h2><p>{{supplier.notes}}</p></section>{% endif %}
+<h2>Productos ofrecidos</h2>
+{% set supplier_context = true %}
+{% include '_product_table.html' %}
+{% endblock %}
