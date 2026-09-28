@@ -1,0 +1,43 @@
+{# Vista de impresión del código existente, sin crear otro identificador. #}
+{% extends 'base.html' %}
+{% block content %}
+<div class="barcode-page">
+  <div class="print-actions">
+    <a class="button secondary" href="{{url_for('products')}}">Volver a productos</a>
+    {% if barcode_image %}<button type="button" class="action-print" id="print-barcode">Imprimir etiqueta</button>{% endif %}
+  </div>
+  <h1 class="barcode-page-title">Código de barras</h1>
+  {% if barcode_error %}<p class="alert error" role="alert">{{barcode_error}}</p>{% endif %}
+  <div class="barcode-label">
+    <strong class="barcode-product-name">{{product.name}}</strong>
+    {% if barcode_image %}<img id="barcode-image" src="{{barcode_image}}" alt="Código de barras de {{product.code}}">{% endif %}
+    <span class="barcode-code">{{product.code}}</span>
+  </div>
+  {% if barcode_image %}
+  <p class="barcode-print-help">Imprimí en tamaño real (100%), con los encabezados y pies de página del navegador desactivados.</p>
+  <script>
+  document.querySelector('#print-barcode').addEventListener('click', async () => {
+    const image = document.querySelector('#barcode-image');
+    await image.decode();
+    window.print();
+  });
+  </script>
+  {% endif %}
+</div>
+<style>
+.barcode-label{display:flex;flex-direction:column;align-items:center;gap:8px;width:max-content;max-width:100%;margin:24px auto;padding:16px;background:#fff;color:#000;border:1px solid #dce3ed}
+.barcode-label img{display:block;max-width:100%;height:auto}
+.barcode-product-name{font-size:16px;max-width:170mm;text-align:center;overflow-wrap:anywhere}
+.barcode-code{font:16px Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-width:170mm;text-align:center}
+.barcode-print-help{color:#526578;text-align:center}
+@page{margin:10mm}
+@media print{
+  body>header,.barcode-page .print-actions,.barcode-page-title,.barcode-print-help{display:none!important}
+  body,main{margin:0;padding:0;background:#fff;max-width:none}
+  .barcode-label{margin:0;padding:0;border:0;max-width:none;break-inside:avoid;gap:2mm}
+  .barcode-label img{max-width:none}
+  .barcode-product-name{font-size:11pt}
+  .barcode-code{font-size:11pt}
+}
+</style>
+{% endblock %}
