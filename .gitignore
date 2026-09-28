@@ -1,0 +1,24 @@
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+
+# Entorno y cachés de Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Datos locales de la instalación y copias de seguridad
+instance/*.db
+instance/*.sqlite*
+backups/
+instance/resumenes/
+
+# Archivos subidos localmente
+app/static/uploads/
+
+# Configuración local del editor
+.vscode/
