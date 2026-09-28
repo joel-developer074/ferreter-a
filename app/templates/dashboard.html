@@ -1,0 +1,30 @@
+{# Panel principal con indicadores y accesos a las acciones de la cabecera. #}
+{% extends 'base.html' %}
+{% block content %}
+<h1>Panel principal</h1>
+<div class="cards">
+  <article><span>Ventas de hoy</span><strong>{{daily_total|ars}}</strong></article>
+  <article><span>Ventas confirmadas</span><strong>{{sale_count}}</strong></article>
+  <article><span>Stock crítico</span><strong>{{critical}}</strong></article>
+</div>
+{% set shortcuts = [
+  ('sale_new', 'Nueva venta', 'M3 3h2l3 12h10l3-8H6 M9 20h.01 M18 20h.01 M12 3v6 M9 6h6', false),
+  ('products', 'Productos', 'M3 7l9-4 9 4v10l-9 4-9-4Z M3 7l9 4 9-4 M12 11v10 M7 5l10 4', false),
+  ('customers', 'Clientes', 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 4a4 4 0 0 1 0 8 M22 21v-2a4 4 0 0 0-3-4', false),
+  ('suppliers', 'Proveedores', 'M3 5h12v12H3Z M15 9h4l3 4v4h-7 M7 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4 M18 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4', true),
+  ('catalog', 'Categorías', 'M3 3h7v7H3Z M14 3h7v7h-7Z M3 14h7v7H3Z M14 14h7v7h-7Z', true),
+  ('sales', 'Tickets', 'M6 3l3 2 3-2 3 2 3-2v18l-3-2-3 2-3-2-3 2Z M9 9h6 M9 13h6', false),
+  ('sales_report', 'Resumen', 'M4 3v18h17 M8 17v-5 M13 17V8 M18 17V4', false),
+  ('logout', 'Salir', 'M9 4H4v16h5 M10 12h11 M17 8l4 4-4 4', false)
+] %}
+<nav class="dashboard-shortcuts" aria-label="Accesos rápidos">
+{% for endpoint, label, icon, owner_only in shortcuts %}
+  {% if not owner_only or current_user.role == 'owner' %}
+  <a class="dashboard-shortcut{% if endpoint == 'logout' %} shortcut-logout{% endif %}" href="{{url_for(endpoint)}}">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="{{icon}}"/></svg>
+    <span>{{label}}</span>
+  </a>
+  {% endif %}
+{% endfor %}
+</nav>
+{% endblock %}
