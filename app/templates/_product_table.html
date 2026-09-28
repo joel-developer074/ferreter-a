@@ -1,0 +1,30 @@
+{# Las listas de productos comparten el orden de columnas y sus acciones. #}
+<div class="table-scroll"><table>
+<thead><tr><th>Imagen</th><th>Nombre del producto</th><th>Clasificación</th><th>Proveedor</th><th>Código</th><th>Stock</th></tr></thead>
+<tbody>
+{% for p in products %}
+<tr class="{{'critical' if p.is_stock_critical else ''}}">
+  <td>{% if p.image_filename %}<img class="product-thumb" src="{{url_for('static',filename='uploads/products/' ~ p.image_filename)}}" alt="{{p.name}}" loading="lazy">{% else %}<span class="no-image">Sin imagen</span>{% endif %}</td>
+  <td><strong>{{p.name}}</strong>
+    {% if not p.active %}<small>Eliminado del catálogo</small>{% elif p.has_box_presentation %}<small>{{p.units_per_box}} unidades/caja</small>{% else %}<small>Venta por unidad</small>{% endif %}
+    <div class="product-prices"><span class="product-price">Unidad: {{p.unit_price|ars}}</span>{% if p.has_box_presentation %}<span class="product-price">Caja: {{p.box_price|ars}}</span>{% endif %}</div>
+    {% if supplier_context|default(false) %}<small>Precio de compra: {{p.purchase_price|ars}}</small>{% endif %}
+    {% if current_user.role=='owner' and p.active %}
+    <div class="product-actions product-list-actions">
+      <a class="button action-edit" href="{{url_for('product_edit',product_id=p.id)}}">Editar</a>
+      <a class="button action-stock" href="{{url_for('product_restock',product_id=p.id)}}">Reposición</a>
+      {% if supplier_context|default(false) %}
+      <form method="post" class="inline" action="{{url_for('supplier_remove_product',supplier_id=supplier.id,product_id=p.id)}}" onsubmit="return confirm('¿Quitar este producto del proveedor?')"><button class="danger">Quitar del proveedor</button></form>
+      {% else %}
+      <form method="post" action="{{url_for('product_delete',product_id=p.id)}}" class="inline" onsubmit="return confirm('¿Eliminar este producto del catálogo?')"><button class="danger">Eliminar</button></form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </td>
+  <td>{{p.category.name if p.category else '—'}}<small>{{p.subcategory.name if p.subcategory else ''}}</small></td>
+  <td>{{p.supplier.name if p.supplier else '—'}}</td>
+  <td><span>{{p.code}}</span><a class="button action-print product-barcode-button" href="{{url_for('product_barcode',product_id=p.id)}}" aria-label="Imprimir código de barras de {{p.name}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9V3h12v6M6 18H3V9h18v9h-3M6 15h12v6H6Z M17 12h1"/></svg>Imprimir código</a></td>
+  <td>{% if p.has_box_presentation %}<b>{{p.closed_boxes}}</b> cajas + {% endif %}<b>{{p.loose_units}}</b> unidades<small>{{p.available_units}} unidades totales</small></td>
+</tr>
+{% else %}<tr><td colspan="6">No hay productos.</td></tr>{% endfor %}
+</tbody></table></div>
