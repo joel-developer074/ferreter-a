@@ -1,0 +1,61 @@
+{# Gestión de las categorías y subcategorías de productos. #}
+{% extends 'base.html' %}
+{% block content %}
+<h1>Categorías y subcategorías</h1>
+<div class="catalog-grid">
+  <section class="panel">
+    <h2>Categorías</h2>
+    <p>Al eliminar una categoría, los productos conservan sus subcategorías.</p>
+    {% for c in categories %}
+    <article class="catalog-entry">
+      <div class="catalog-name"><strong>{{c.name}}</strong></div>
+      <div class="catalog-actions">
+        <details><summary class="button action-edit">Editar</summary>
+          <form method="post" class="compact-form">
+            <input type="hidden" name="action" value="edit_category"><input type="hidden" name="id" value="{{c.id}}">
+            <label>Nombre de la categoría<input name="name" value="{{c.name}}" maxlength="100" required></label>
+            <button class="action-save">Guardar cambios</button>
+          </form>
+        </details>
+        <form method="post" onsubmit="return confirm('¿Eliminar esta categoría? Los productos y sus subcategorías se conservarán.')">
+          <input type="hidden" name="action" value="delete_category"><input type="hidden" name="id" value="{{c.id}}">
+          <button class="danger">Eliminar</button>
+        </form>
+      </div>
+    </article>
+    {% else %}<p>Sin categorías.</p>{% endfor %}
+    <form method="post" class="compact-form">
+      <input type="hidden" name="action" value="category">
+      <label>Nueva categoría<input name="name" maxlength="100" required></label>
+      <button class="action-create">Agregar categoría</button>
+    </form>
+  </section>
+  <section class="panel">
+    <h2>Subcategorías</h2>
+    <p>Las subcategorías son independientes. En cada producto podés combinarlas con cualquier categoría.</p>
+    {% for s in subcategories %}
+    <article class="catalog-entry">
+      <div class="catalog-name"><strong>{{s.name}}</strong></div>
+      <div class="catalog-actions">
+        <details><summary class="button action-edit">Editar</summary>
+          <form method="post" class="compact-form">
+            <input type="hidden" name="action" value="edit_subcategory"><input type="hidden" name="id" value="{{s.id}}">
+            <label>Nombre de la subcategoría<input name="name" value="{{s.name}}" maxlength="100" required></label>
+            <button class="action-save">Guardar cambios</button>
+          </form>
+        </details>
+        <form method="post" onsubmit="return confirm('¿Eliminar esta subcategoría? Se quitará de los productos, sin eliminar los productos ni su categoría.')">
+          <input type="hidden" name="action" value="delete_subcategory"><input type="hidden" name="id" value="{{s.id}}">
+          <button class="danger">Eliminar</button>
+        </form>
+      </div>
+    </article>
+    {% else %}<p>Sin subcategorías.</p>{% endfor %}
+    <form method="post" class="compact-form">
+      <input type="hidden" name="action" value="subcategory">
+      <label>Nueva subcategoría<input name="name" maxlength="100" required></label>
+      <button class="action-create">Agregar subcategoría</button>
+    </form>
+  </section>
+</div>
+{% endblock %}
