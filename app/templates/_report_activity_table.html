@@ -1,0 +1,14 @@
+<section class="panel report-section activity-results-section">
+  <h2>Detalle de cambios y actividad por cuenta</h2>
+  <p>Incluye la cuenta utilizada, fecha, hora, elemento afectado y detalle registrado.</p>
+  <div class="table-scroll"><table class="report-activity-table">
+    <thead><tr><th>Fecha y hora</th><th>Cuenta utilizada</th><th>Tipo</th><th>Acción</th><th>Elemento</th><th>Detalle registrado</th></tr></thead>
+    <tbody>{% for event in activities %}<tr>
+      <td>{{event.created_at.strftime('%d/%m/%Y %H:%M:%S')}}</td>
+      <td><strong>{{event.user.full_name}}</strong><small>{{event.user.username}} · {{'Dueño' if event.user.role == 'owner' else 'Empleado'}}{% if not event.user.active %} · Cuenta eliminada{% endif %}</small></td>
+      <td>{{event.action.split('_')[0].title()}}</td>
+      <td><span class="activity-name">{{activity_labels.get(event.action, event.action.replace('_',' ').title())}}</span></td>
+      <td>{{event.entity}} #{{event.entity_id}}</td><td>{{event.details}}</td>
+    </tr>{% else %}<tr><td colspan="6">No hay cambios o actividades para los filtros seleccionados.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
