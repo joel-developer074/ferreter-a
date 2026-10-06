@@ -1,0 +1,21 @@
+{# Registra roturas, desperfectos y otras mermas sin borrar el producto. #}
+{% extends 'base.html' %}
+{% block content %}
+<div class="title-row"><div><h1>Registrar merma</h1><p>Descontá productos rotos o con desperfectos y dejá registrado el motivo.</p></div><a class="button secondary" href="{{url_for('products')}}">Volver a productos</a></div>
+
+<section class="panel product-loss-panel">
+  <div class="loss-product-summary">
+    <div><span>Producto</span><strong>{{product.name}}</strong><small>Código {{product.code}}</small></div>
+    <div><span>Stock actual</span><strong>{% if product.has_box_presentation %}{{product.closed_boxes}} cajas + {% endif %}{{product.loose_units}} unidades</strong><small>{{product.available_units}} unidades totales</small></div>
+  </div>
+  <form method="post" class="form-grid product-loss-form">
+    {% if product.has_box_presentation %}<label>Presentación a descontar
+      <select name="presentation" required><option value="UNIDAD" {% if form_data.get('presentation','UNIDAD') == 'UNIDAD' %}selected{% endif %}>Unidad individual</option><option value="CAJA" {% if form_data.get('presentation') == 'CAJA' %}selected{% endif %}>Caja completa</option></select>
+    </label>{% else %}<input type="hidden" name="presentation" value="UNIDAD"><div class="loss-unit-note"><span>Presentación</span><strong>Unidad individual</strong><small>Este producto no se administra por cajas.</small></div>{% endif %}
+    <label>Cantidad a descontar<input name="quantity" type="number" min="1" step="1" value="{{form_data.get('quantity','')}}" required></label>
+    <label>Tipo de merma<select name="loss_type" required><option value="">Seleccionar</option><option value="ROTURA" {% if form_data.get('loss_type') == 'ROTURA' %}selected{% endif %}>Producto roto</option><option value="DESPERFECTO" {% if form_data.get('loss_type') == 'DESPERFECTO' %}selected{% endif %}>Producto con desperfecto</option><option value="OTRO" {% if form_data.get('loss_type') == 'OTRO' %}selected{% endif %}>Otro motivo</option></select></label>
+    <label class="wide">Descripción del motivo<textarea name="reason_detail" minlength="5" maxlength="300" rows="4" placeholder="Describí qué ocurrió y el estado del producto" required>{{form_data.get('reason_detail','')}}</textarea><small>Entre 5 y 300 caracteres. Este texto quedará guardado con la fecha, hora y cuenta utilizada.</small></label>
+    <div class="form-actions wide"><button type="submit" class="danger" onclick="return confirm('¿Confirmar el descuento de stock por merma?');">Descontar stock</button><a class="button secondary" href="{{url_for('products')}}">Cancelar</a></div>
+  </form>
+</section>
+{% endblock %}
