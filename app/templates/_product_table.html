@@ -9,16 +9,16 @@
     {% if not p.active %}<small>Eliminado del catálogo</small>{% elif p.has_box_presentation %}<small>{{p.units_per_box}} unidades/caja</small>{% else %}<small>Venta por unidad</small>{% endif %}
     <div class="product-prices"><span class="product-price">Unidad: {{p.unit_price|ars}}</span>{% if p.has_box_presentation %}<span class="product-price">Caja: {{p.box_price|ars}}</span>{% endif %}</div>
     {% if supplier_context|default(false) %}<small>Precio de compra: {{p.purchase_price|ars}}</small>{% endif %}
-    {% if current_user.role=='owner' and p.active %}
+    {% if p.active %}
     <div class="product-actions product-list-actions">
-      <a class="button action-edit" href="{{url_for('product_edit',product_id=p.id)}}">Editar</a>
+      {% if current_user.role=='owner' %}<a class="button action-edit" href="{{url_for('product_edit',product_id=p.id)}}">Editar</a>{% endif %}
       <a class="button action-stock" href="{{url_for('product_restock',product_id=p.id)}}">Reposición</a>
       <a class="button danger" href="{{url_for('product_loss',product_id=p.id)}}">Merma</a>
-      {% if supplier_context|default(false) %}
+      {% if current_user.role=='owner' %}{% if supplier_context|default(false) %}
       <form method="post" class="inline" action="{{url_for('supplier_remove_product',supplier_id=supplier.id,product_id=p.id)}}" onsubmit="return confirm('¿Quitar este producto del proveedor?')"><button class="danger">Quitar del proveedor</button></form>
       {% else %}
       <form method="post" action="{{url_for('product_delete',product_id=p.id)}}" class="inline" onsubmit="return confirm('¿Eliminar este producto del catálogo?')"><button class="danger">Eliminar</button></form>
-      {% endif %}
+      {% endif %}{% endif %}
     </div>
     {% endif %}
   </td>
