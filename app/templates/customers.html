@@ -1,2 +1,47 @@
-{# Listado de clientes y formulario para registrar nuevos clientes. #}
-{% extends 'base.html' %}{% block content %}<div class="two-col"><section><h1>Clientes</h1><table><thead><tr><th>Apellido y nombre</th><th>DNI</th><th>Teléfono</th><th>Dirección</th><th>Descuento</th><th></th></tr></thead><tbody>{% for c in customers %}<tr><td>{{c.last_name+', '+c.first_name if c.first_name else c.name}}</td><td>{{c.dni or '—'}}</td><td>{{c.phone or '—'}}</td><td>{{c.address or '—'}}</td><td>{{c.discount_percent}}%</td><td>{% if current_user.role=='owner' %}<div class="customer-actions"><a class="button action-edit" href="{{url_for('customer_edit',customer_id=c.id)}}">Editar</a><form method="post" action="{{url_for('customer_delete',customer_id=c.id)}}" onsubmit="return confirm('¿Eliminar este cliente? Se conservarán sus ventas anteriores y sus deudas.')"><button class="danger">Eliminar</button></form></div>{% endif %}</td></tr>{% else %}<tr><td colspan="6">Aún no hay clientes.</td></tr>{% endfor %}</tbody></table><h2>Lista de deudas</h2><table><thead><tr><th>Cliente</th><th>Teléfono</th><th>Deuda</th></tr></thead><tbody>{% for c in debt_customers %}<tr><td>{{c.last_name+', '+c.first_name if c.first_name else c.name}}{% if not c.active %}<small>Cliente eliminado</small>{% endif %}</td><td>{{c.phone}}</td><td>{{c.debt_balance|ars}}</td></tr>{% else %}<tr><td colspan="3">No hay deudas registradas.</td></tr>{% endfor %}</tbody></table></section><section class="panel"><h2>Agregar cliente</h2><form method="post"><label>Nombre<input name="first_name" value="{{form_data.get('first_name','')}}" required></label><label>Apellido<input name="last_name" value="{{form_data.get('last_name','')}}" required></label><label>DNI<input name="dni" class="{{'invalid' if field_errors.get('dni')}}" value="{{form_data.get('dni','')}}">{% if field_errors.get('dni') %}<small class="field-error">{{field_errors.dni}}</small>{% endif %}</label><label>Teléfono / celular<input name="phone" value="{{form_data.get('phone','')}}"></label><label>Dirección (opcional)<input name="address" value="{{form_data.get('address','')}}"></label><label>Descuento opcional (%)<input name="discount_percent" value="{{form_data.get('discount_percent','')}}" type="number" min="0" max="100" step="0.01"></label><button class="action-save">Guardar cliente</button></form></section></div>{% endblock %}
+{# Listado de clientes, descuentos pendientes y formulario de alta. #}
+{% extends 'base.html' %}
+{% block content %}
+<div class="customers-page">
+  <h1>Clientes</h1>
+  <section class="panel customer-create-panel" aria-labelledby="customer-create-title">
+    <h2 id="customer-create-title">Agregar cliente</h2>
+    <form method="post" class="customer-create-form">
+      <label>Nombre<input name="first_name" value="{{form_data.get('first_name','')}}" required></label>
+      <label>Apellido<input name="last_name" value="{{form_data.get('last_name','')}}" required></label>
+      <label>DNI<input name="dni" class="{{'invalid' if field_errors.get('dni')}}" value="{{form_data.get('dni','')}}">{% if field_errors.get('dni') %}<small class="field-error">{{field_errors.dni}}</small>{% endif %}</label>
+      <label>Teléfono / celular<input name="phone" value="{{form_data.get('phone','')}}"></label>
+      <label>Dirección (opcional)<input name="address" value="{{form_data.get('address','')}}"></label>
+      <label>Descuento opcional (%)<input name="discount_percent" value="{{form_data.get('discount_percent','')}}" type="number" min="0" max="100" step="0.01"><small>{% if current_user.role == 'owner' %}Se aplica al guardar el cliente.{% else %}Un dueño deberá aprobar el descuento antes de que se aplique en las ventas.{% endif %}</small></label>
+      <button class="action-save">Guardar cliente</button>
+    </form>
+  </section>
+  <section class="customer-records">
+    {% if current_user.role == 'owner' %}
+      {% set pending_customers = customers|selectattr('pending_discount_percent', 'ne', none)|list %}
+      {% if pending_customers %}
+      <section class="pending-discounts" aria-labelledby="pending-discounts-title">
+        <h2 id="pending-discounts-title">Descuentos pendientes de aprobación</h2>
+        {% for c in pending_customers %}
+        <div class="pending-discount">
+          <div><strong>{{c.last_name+', '+c.first_name if c.first_name else c.name}}</strong><small>Descuento solicitado: {{c.pending_discount_percent}}% · Vigente: {{c.discount_percent}}%</small></div>
+          <div class="customer-actions">
+            <form method="post" action="{{url_for('customer_discount_approval',customer_id=c.id)}}"><input type="hidden" name="decision" value="approve"><button class="action-save">Aprobar</button></form>
+            <form method="post" action="{{url_for('customer_discount_approval',customer_id=c.id)}}"><input type="hidden" name="decision" value="reject"><button class="danger">Rechazar</button></form>
+          </div>
+        </div>
+        {% endfor %}
+      </section>
+      {% endif %}
+    {% endif %}
+    <div class="table-scroll customer-table-scroll"><table><thead><tr><th>Apellido y nombre</th><th>DNI</th><th>Teléfono</th><th>Dirección</th><th>Descuento</th><th></th></tr></thead><tbody>
+      {% for c in customers %}<tr>
+        <td>{{c.last_name+', '+c.first_name if c.first_name else c.name}}</td>
+        <td>{{c.dni or '—'}}</td><td>{{c.phone or '—'}}</td><td>{{c.address or '—'}}</td>
+        <td>{{c.discount_percent}}%{% if c.pending_discount_percent is not none %}<small class="pending-discount-note">{{c.pending_discount_percent}}% pendiente de aprobación</small>{% endif %}</td>
+        <td>{% if current_user.role=='owner' %}<div class="customer-actions"><a class="button action-edit" href="{{url_for('customer_edit',customer_id=c.id)}}">Editar</a><form method="post" action="{{url_for('customer_delete',customer_id=c.id)}}" onsubmit="return confirm('¿Eliminar este cliente? Se conservarán sus ventas anteriores y sus deudas.')"><button class="danger">Eliminar</button></form></div>{% endif %}</td>
+      </tr>{% else %}<tr><td colspan="6">Aún no hay clientes.</td></tr>{% endfor %}
+    </tbody></table></div>
+    <h2>Lista de deudas</h2><table><thead><tr><th>Cliente</th><th>Teléfono</th><th>Deuda</th></tr></thead><tbody>{% for c in debt_customers %}<tr><td>{{c.last_name+', '+c.first_name if c.first_name else c.name}}{% if not c.active %}<small>Cliente eliminado</small>{% endif %}</td><td>{{c.phone}}</td><td>{{c.debt_balance|ars}}</td></tr>{% else %}<tr><td colspan="3">No hay deudas registradas.</td></tr>{% endfor %}</tbody></table>
+  </section>
+</div>
+{% endblock %}
