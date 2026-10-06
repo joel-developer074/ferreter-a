@@ -1,8 +1,23 @@
 {# Catálogo de productos con acciones de administración y control de stock. #}
 {% extends 'base.html' %}{% block content %}
-<div class="title-row"><h1>Productos y stock</h1>{% if current_user.role=='owner' %}<a class="button action-create new-product-button" href="{{url_for('product_new')}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><span>Nuevo producto</span></a>{% endif %}</div>
+<div class="title-row"><h1>Productos y stock</h1><a class="button action-create new-product-button" href="{{url_for('product_new')}}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><span>Nuevo producto</span></a></div>
+<div class="products-layout">
+<div class="products-main">
 <form class="search" id="product-search-form" action="{{url_for('products')}}"><input id="product-search" type="search" aria-label="Buscar productos por nombre o código" aria-controls="product-results" autofocus autocomplete="off" name="q" value="{{query}}" placeholder="Buscar por código o nombre"><button class="action-search">Buscar</button></form>
 <p id="product-search-status" role="status" aria-live="polite"></p>
 <div id="product-results">{% include '_product_table.html' %}</div>
+</div>
+<aside class="low-stock-sidebar" aria-labelledby="low-stock-title">
+  <h2 id="low-stock-title">Necesitan reposición <span>{{low_stock_products|length}}</span></h2>
+  <p>Productos que alcanzaron o bajaron de su stock mínimo.</p>
+  {% if low_stock_products %}<ul class="low-stock-list">
+    {% for p in low_stock_products %}<li>
+      <strong>{{p.name}}</strong><small>Código {{p.code}}</small>
+      <span>{{p.closed_boxes if p.has_box_presentation else p.available_units}} de {{p.minimum_stock|int}} {{'cajas' if p.has_box_presentation else 'unidades'}}</span>
+      <a class="button action-stock" href="{{url_for('product_restock',product_id=p.id)}}">Reponer</a>
+    </li>{% endfor %}
+  </ul>{% else %}<p class="low-stock-empty">No hay productos pendientes de reposición.</p>{% endif %}
+</aside>
+</div>
 <script src="{{url_for('static',filename='product-search.js')}}" defer></script>
 {% endblock %}
