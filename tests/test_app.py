@@ -231,12 +231,11 @@ def test_owner_records_box_and_unit_losses_with_account_date_and_reason():
     assert "Dinero ingresado por medio de pago" not in report
 
 
-def test_product_loss_rejects_invalid_or_excessive_quantity_and_is_owner_only():
+def test_product_loss_rejects_invalid_or_excessive_quantity_for_employee():
     from app import InventoryMovement
     client, app = app_client(); login(client, "employee")
-    assert client.get("/products/1/loss").status_code == 403
-    assert client.post("/products/1/loss", data={}).status_code == 403
-    client.get("/logout"); login(client, "owner")
+    assert client.get("/products/1/loss").status_code == 200
+    assert client.post("/products/1/loss", data={}).status_code == 200
     for payload, message in [
         ({"presentation":"CAJA", "quantity":"99", "loss_type":"ROTURA", "reason_detail":"Cantidad superior al stock."}, "No hay suficientes cajas cerradas"),
         ({"presentation":"UNIDAD", "quantity":"1", "loss_type":"ROTURA", "reason_detail":"mal"}, "entre 5 y 300 caracteres"),
@@ -386,13 +385,13 @@ def test_sale_form_marks_unit_only_products_as_not_sold_by_box():
     assert b'data-has-box="0"' in response.data
 
 
-def test_customer_accepts_identity_data_and_optional_discount():
+def test_employee_customer_discount_remains_pending_until_owner_approves():
     client, app = app_client(); login(client)
     response = client.post("/customers", data={"first_name":"Ana", "last_name":"Perez", "dni":"30111222", "phone":"11 5555 1234", "discount_percent":"12.5"}, follow_redirects=True)
     assert response.status_code == 200
     with app.app_context():
         customer = Customer.query.filter_by(dni="30111222").one()
-        assert (customer.name, customer.discount_percent) == ("Perez, Ana", 12.5)
+        assert (customer.name, customer.discount_percent, customer.pending_discount_percent) == ("Perez, Ana", 0, 12.5)
 
 
 def test_duplicate_product_keeps_values_and_marks_code():
@@ -1058,10 +1057,9 @@ def test_owner_generates_random_code_skipping_existing_products(monkeypatch):
     assert response.get_json()['code'] == '000000000456'
 
 
-def test_generate_product_code_is_owner_only_and_button_is_on_new_form():
+def test_generate_product_code_is_available_to_employee_and_button_is_on_new_form():
     client, _ = app_client(); login(client)
-    assert client.get('/products/generate-code').status_code == 403
-    client.get('/logout'); login(client, 'owner')
+    assert client.get('/products/generate-code').status_code == 200
     new_form = client.get('/products/new').get_data(as_text=True)
     edit_form = client.get('/products/1/edit').get_data(as_text=True)
     assert 'id="generate-product-code"' in new_form
@@ -1123,3 +1121,151 @@ def test_stale_cart_cannot_sell_to_deleted_customer():
     assert 'cliente seleccionado ya no está disponible' in response.json['error']
     with app.app_context():
         assert Sale.query.count() == 0 and db.session.get(Product, 1).available_units == 5
+
+
+def test_employee_can_create_restock_and_record_loss_with_low_stock_sidebar():
+    from app import InventoryMovement
+
+    client, app = app_client(); login(client, 'employee')
+    response = client.post('/products/new', data={
+        'code':'EMP-1', 'name':'Producto empleado', 'unit_price':'100',
+        'loose_units':'1', 'minimum_stock':'2',
+    }, follow_redirects=True)
+    assert response.status_code == 200 and 'Producto creado.' in response.get_data(as_text=True)
+    with app.app_context():
+        product = Product.query.filter_by(code='EMP-1').one()
+        product_id = product.id
+    html = client.get('/products?q=No+existe').get_data(as_text=True)
+    assert 'Necesitan reposición' in html and 'Producto empleado' in html
+    html = client.get('/products').get_data(as_text=True)
+    assert f'/products/{product_id}/restock' in html and f'/products/{product_id}/loss' in html
+    assert f'/products/{product_id}/edit' not in html
+    assert f'/products/{product_id}/delete' not in html
+    assert client.get(f'/products/{product_id}/loss').status_code == 200
+    assert client.get(f'/products/{product_id}/restock').status_code == 200
+
+    response = client.post(f'/products/{product_id}/restock', data={
+        'add_units':'3', 'purchase_price':'50', 'unit_price':'100',
+    }, follow_redirects=True)
+    assert 'Reposición y precios actualizados.' in response.get_data(as_text=True)
+    assert 'Producto empleado' not in client.get('/products?q=No+existe').get_data(as_text=True).split('Necesitan reposición')[1]
+    response = client.post(f'/products/{product_id}/loss', data={
+        'presentation':'UNIDAD', 'quantity':'2', 'loss_type':'ROTURA',
+        'reason_detail':'Dos unidades dañadas.',
+    }, follow_redirects=True)
+    assert 'Merma registrada y stock actualizado correctamente.' in response.get_data(as_text=True)
+    with app.app_context():
+        product = db.session.get(Product, product_id)
+        assert product.available_units == 2 and product.is_stock_critical
+        movements = InventoryMovement.query.filter_by(product_id=product_id).order_by(InventoryMovement.id).all()
+        assert [movement.movement_type for movement in movements] == ['ALTA', 'REPOSICION', 'MERMA']
+        assert all(movement.user_id == 2 for movement in movements)
+    login(client, 'owner')
+    assert 'Producto empleado' in client.get('/products?q=No+existe').get_data(as_text=True)
+
+
+def test_employee_discount_needs_owner_decision_and_cannot_affect_sales_early():
+    client, app = app_client(); login(client, 'employee')
+    response = client.post('/customers', data={
+        'first_name':'Ana', 'last_name':'Pérez', 'discount_percent':'10',
+    }, follow_redirects=True)
+    assert 'pendiente hasta que lo apruebe una cuenta dueño' in response.get_data(as_text=True)
+    with app.app_context():
+        customer = Customer.query.one()
+        customer_id = customer.id
+        assert customer.discount_percent == 0 and customer.pending_discount_percent == 10
+    assert client.post(f'/customers/{customer_id}/discount', data={'decision':'approve'}).status_code == 403
+    sale_payload = {
+        'customer_id':customer_id,
+        'items':[{'product_id':1, 'presentation':'UNIDAD', 'quantity':1}],
+        'payments':[{'method':'DEBITO', 'amount':''}],
+    }
+    assert client.post('/sales', json=sale_payload).status_code == 200
+    with app.app_context():
+        assert Sale.query.one().total == 100
+        assert SaleItem.query.one().discount_percent == 0
+
+    login(client, 'owner')
+    html = client.get('/customers').get_data(as_text=True)
+    assert 'Descuentos pendientes de aprobación' in html
+    assert '10.00% pendiente de aprobación' in html
+    assert client.post(f'/customers/{customer_id}/discount', data={'decision':'approve'}, follow_redirects=True).status_code == 200
+    with app.app_context():
+        customer = db.session.get(Customer, customer_id)
+        assert customer.discount_percent == 10 and customer.pending_discount_percent is None
+        assert AuditEvent.query.filter_by(action='SOLICITAR_DESCUENTO').one().user_id == 2
+        assert AuditEvent.query.filter_by(action='APROBAR_DESCUENTO').one().user_id == 1
+    login(client, 'employee')
+    assert client.post('/sales', json=sale_payload).status_code == 200
+    with app.app_context():
+        assert Sale.query.order_by(Sale.id.desc()).first().total == 90
+
+    client.post('/customers', data={'first_name':'Juan', 'last_name':'Ríos', 'discount_percent':'15'})
+    with app.app_context():
+        second_id = Customer.query.filter_by(first_name='Juan').one().id
+    login(client, 'owner')
+    client.post(f'/customers/{second_id}/discount', data={'decision':'reject'})
+    with app.app_context():
+        second = db.session.get(Customer, second_id)
+        assert second.discount_percent == 0 and second.pending_discount_percent is None
+        assert AuditEvent.query.filter_by(action='RECHAZAR_DESCUENTO').one().user_id == 1
+
+
+def test_owner_created_customer_discount_is_available_immediately():
+    client, app = app_client(); login(client, 'owner')
+    response = client.post('/customers', data={
+        'first_name':'Laura', 'last_name':'Gómez', 'discount_percent':'12.5',
+    }, follow_redirects=True)
+    assert 'Cliente agregado.' in response.get_data(as_text=True)
+    with app.app_context():
+        customer = Customer.query.one()
+        assert customer.discount_percent == 12.5 and customer.pending_discount_percent is None
+
+
+def test_blank_payment_amount_covers_total_for_every_method():
+    client, app = app_client(); login(client, 'employee')
+    for method in ['EFECTIVO', 'DEBITO', 'CREDITO', 'TRANSFERENCIA', 'QR']:
+        response = client.post('/sales', json={
+            'items':[{'product_id':1, 'presentation':'UNIDAD', 'quantity':1}],
+            'payments':[{'method':method, 'amount':''}],
+        })
+        assert response.status_code == 200 and response.json['ok']
+    with app.app_context():
+        assert [(payment.method, payment.amount) for payment in Payment.query.order_by(Payment.id)] == [
+            (method, 100) for method in ['EFECTIVO', 'DEBITO', 'CREDITO', 'TRANSFERENCIA', 'QR']
+        ]
+
+
+def test_mixed_payment_allows_one_blank_remainder_but_rejects_ambiguous_blanks():
+    client, app = app_client(); login(client, 'employee')
+    payload = {'items':[{'product_id':1, 'presentation':'UNIDAD', 'quantity':1}]}
+    response = client.post('/sales', json={**payload, 'payments':[
+        {'method':'DEBITO', 'amount':'40'}, {'method':'QR', 'amount':''},
+    ]})
+    assert response.status_code == 200
+    with app.app_context():
+        assert [(payment.method, payment.amount) for payment in Payment.query.order_by(Payment.id)] == [('DEBITO', 40), ('QR', 60)]
+    response = client.post('/sales', json={**payload, 'payments':[
+        {'method':'EFECTIVO', 'amount':''}, {'method':'QR', 'amount':''},
+    ]})
+    assert response.status_code == 400 and 'un solo importe vacío' in response.json['error']
+    with app.app_context():
+        assert Sale.query.count() == 1 and db.session.get(Product, 1).available_units == 4
+
+
+def test_existing_customer_table_adds_pending_discount_without_losing_clients():
+    from sqlalchemy import inspect, text
+    from app import ensure_schema
+
+    _, app = app_client()
+    with app.app_context():
+        db.session.add(Customer(name='Cliente anterior', discount_percent=5))
+        db.session.commit()
+        db.session.execute(text('ALTER TABLE customer DROP COLUMN pending_discount_percent'))
+        db.session.commit()
+        ensure_schema()
+        columns = {column['name'] for column in inspect(db.engine).get_columns('customer')}
+        assert 'pending_discount_percent' in columns
+        customer = Customer.query.one()
+        assert customer.name == 'Cliente anterior' and customer.discount_percent == 5
+        assert customer.pending_discount_percent is None
