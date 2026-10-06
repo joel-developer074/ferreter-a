@@ -13,6 +13,7 @@
     <div class="product-actions product-list-actions">
       <a class="button action-edit" href="{{url_for('product_edit',product_id=p.id)}}">Editar</a>
       <a class="button action-stock" href="{{url_for('product_restock',product_id=p.id)}}">Reposición</a>
+      <a class="button danger" href="{{url_for('product_loss',product_id=p.id)}}">Merma</a>
       {% if supplier_context|default(false) %}
       <form method="post" class="inline" action="{{url_for('supplier_remove_product',supplier_id=supplier.id,product_id=p.id)}}" onsubmit="return confirm('¿Quitar este producto del proveedor?')"><button class="danger">Quitar del proveedor</button></form>
       {% else %}
