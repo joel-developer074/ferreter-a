@@ -5,7 +5,8 @@ const vm = require('node:vm');
 
 function setup(checked, editing = false) {
   const ids = ['has-box', 'box-fields', 'units-per-box', 'closed-boxes', 'calculated-units',
-    'loose-units-row', 'minimum-stock-label', 'product-image', 'image-preview', 'image-preview-wrap'];
+    'loose-units-row', 'minimum-stock-label', 'product-image', 'image-preview', 'image-preview-wrap',
+    'has-box-toggle', 'has-box-toggle-state'];
   const nodes = Object.fromEntries(ids.map(id => [`#${id}`, {value:'', hidden:false, textContent:''}]));
   nodes['#has-box'].checked = checked;
   nodes['#units-per-box'].value = '10';
@@ -23,6 +24,13 @@ function setup(checked, editing = false) {
   });
   return {nodes, boxInputs, toggle(value) { nodes['#has-box'].checked = value; nodes['#has-box'].onchange(); }};
 }
+
+test('the box button state explains whether the presentation is active', () => {
+  const s = setup(false);
+  assert.match(s.nodes['#has-box-toggle-state'].textContent, /Tocá para activar/);
+  s.toggle(true);
+  assert.match(s.nodes['#has-box-toggle-state'].textContent, /Activado/);
+});
 
 test('checking box sales changes the minimum label to boxes and unchecking restores units', () => {
   const s = setup(false);
