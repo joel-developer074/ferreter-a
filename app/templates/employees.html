@@ -1,0 +1,92 @@
+{# Administración de cuentas e historial de seguridad, exclusiva para dueños. #}
+{% extends 'base.html' %}
+{% block content %}
+<div class="title-row employee-title">
+  <div>
+    <h1>Empleados y cuentas</h1>
+    <p>Creá accesos personales y consultá quién realizó cada operación en el sistema.</p>
+  </div>
+  <span class="owner-only-badge">Solo para dueños</span>
+</div>
+
+<div class="employee-admin-grid">
+  <section class="panel employee-account-list">
+    <h2>Cuentas registradas</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Persona</th><th>Usuario</th><th>Rol</th><th>Contacto</th><th>Última conexión</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <tbody>
+        {% for account in accounts %}
+          <tr>
+            <td><strong>{{account.full_name}}</strong><small>DNI {{account.dni or '—'}}{% if account.address %}<br>{{account.address}}{% endif %}</small></td>
+            <td>{{account.username}}</td>
+            <td><span class="role-badge role-{{account.role}}">{{'Dueño' if account.role == 'owner' else 'Empleado'}}</span></td>
+            <td>{{account.phone or '—'}}{% if account.email %}<small>{{account.email}}</small>{% endif %}</td>
+            <td>{% if account.last_login_at %}{{account.last_login_at.strftime('%d/%m/%Y %H:%M')}}{% else %}Nunca{% endif %}{% if account.last_logout_at %}<small>Última salida: {{account.last_logout_at.strftime('%d/%m/%Y %H:%M')}}</small>{% endif %}</td>
+            <td><span class="account-status {{'active' if account.active else 'inactive'}}">{{'Activa' if account.active else 'Inactiva'}}</span></td>
+            <td>
+              {% if account.active and account.id != current_user.id %}
+                <form method="post" action="{{url_for('delete_employee', user_id=account.id)}}" class="account-delete-form" onsubmit="return confirm('¿Eliminar la cuenta de {{account.full_name}}? No podrá volver a ingresar, pero sus ventas y registros se conservarán.');">
+                  <button class="danger" type="submit">Eliminar</button>
+                </form>
+              {% elif account.id == current_user.id %}<small>Cuenta actual</small>
+              {% else %}<small>Historial conservado</small>{% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7">No hay cuentas registradas.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel employee-create-panel">
+    <h2>Dar de alta una cuenta</h2>
+    <p>Cada persona debe ingresar con su propio usuario y contraseña.</p>
+    <form method="post" class="form-grid employee-form" autocomplete="off">
+      <label>Nombre<input name="first_name" minlength="2" maxlength="100" value="{{form_data.get('first_name','')}}" class="{{'invalid' if field_errors.get('first_name')}}" required>{% if field_errors.get('first_name') %}<small class="field-error">{{field_errors.first_name}}</small>{% endif %}</label>
+      <label>Apellido<input name="last_name" minlength="2" maxlength="100" value="{{form_data.get('last_name','')}}" class="{{'invalid' if field_errors.get('last_name')}}" required>{% if field_errors.get('last_name') %}<small class="field-error">{{field_errors.last_name}}</small>{% endif %}</label>
+      <label>DNI<input name="dni" maxlength="15" inputmode="numeric" pattern="[0-9.\s-]{7,15}" title="Ingresá entre 7 y 9 números; se permiten puntos, espacios y guiones." value="{{form_data.get('dni','')}}" class="{{'invalid' if field_errors.get('dni')}}" required>{% if field_errors.get('dni') %}<small class="field-error">{{field_errors.dni}}</small>{% else %}<small>Entre 7 y 9 números.</small>{% endif %}</label>
+      <label>Teléfono / celular<input name="phone" maxlength="30" type="tel" pattern="[+0-9()\s-]{8,30}" title="Ingresá entre 8 y 15 números; se permiten +, espacios, paréntesis y guiones." value="{{form_data.get('phone','')}}" class="{{'invalid' if field_errors.get('phone')}}" required>{% if field_errors.get('phone') %}<small class="field-error">{{field_errors.phone}}</small>{% else %}<small>Entre 8 y 15 números.</small>{% endif %}</label>
+      <label>Correo electrónico<input name="email" maxlength="160" type="email" value="{{form_data.get('email','')}}" class="{{'invalid' if field_errors.get('email')}}" required>{% if field_errors.get('email') %}<small class="field-error">{{field_errors.email}}</small>{% endif %}</label>
+      <label>Dirección<input name="address" minlength="5" maxlength="250" value="{{form_data.get('address','')}}" class="{{'invalid' if field_errors.get('address')}}" required>{% if field_errors.get('address') %}<small class="field-error">{{field_errors.address}}</small>{% endif %}</label>
+      <label>Usuario<input name="username" minlength="3" maxlength="60" pattern="[A-Za-z0-9._-]{3,60}" title="Usá letras, números, puntos, guiones o guiones bajos." autocapitalize="none" value="{{form_data.get('username','')}}" class="{{'invalid' if field_errors.get('username')}}" required>{% if field_errors.get('username') %}<small class="field-error">{{field_errors.username}}</small>{% endif %}</label>
+      <label>Contraseña<input name="password" type="password" minlength="8" maxlength="128" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,128}" title="Debe tener una mayúscula, una minúscula y un número." autocomplete="new-password" class="{{'invalid' if field_errors.get('password')}}" required>{% if field_errors.get('password') %}<small class="field-error">{{field_errors.password}}</small>{% else %}<small>De 8 a 128 caracteres, con mayúscula, minúscula y número.</small>{% endif %}</label>
+      <label class="wide">Tipo de cuenta<select name="role" class="{{'invalid' if field_errors.get('role')}}" required><option value="">Seleccionar</option><option value="employee" {% if form_data.get('role') == 'employee' %}selected{% endif %}>Empleado</option><option value="owner" {% if form_data.get('role') == 'owner' %}selected{% endif %}>Dueño</option></select>{% if field_errors.get('role') %}<small class="field-error">{{field_errors.role}}</small>{% endif %}</label>
+      <div class="form-actions wide"><button class="action-save">Crear cuenta</button></div>
+    </form>
+  </section>
+</div>
+
+<section class="panel account-activity-panel">
+  <div class="activity-heading">
+    <div><h2>Historial de actividad</h2><p>Incluye conexiones, ventas, devoluciones, reposiciones y cambios realizados por dueños y empleados.</p></div>
+    <form method="get" class="activity-filters">
+      <label>Cuenta<select name="user_id"><option value="">Todas</option>{% for account in accounts %}<option value="{{account.id}}" {% if selected_user == account.id|string %}selected{% endif %}>{{account.full_name}} ({{account.username}})</option>{% endfor %}</select></label>
+      <label>Acción<select name="action"><option value="">Todas</option>{% for action in actions %}<option value="{{action}}" {% if selected_action == action %}selected{% endif %}>{{activity_labels.get(action, action.replace('_',' ').title())}}</option>{% endfor %}</select></label>
+      <button class="action-add">Filtrar</button>
+      {% if selected_user or selected_action %}<a class="button secondary" href="{{url_for('employees')}}">Limpiar</a>{% endif %}
+    </form>
+  </div>
+  <div class="table-scroll activity-table-wrap">
+    <table class="activity-table">
+      <thead><tr><th>Fecha y hora</th><th>Cuenta</th><th>Tipo</th><th>Actividad</th><th>Referencia</th><th>Detalle</th></tr></thead>
+      <tbody>
+      {% for event in activities %}
+        <tr class="activity-{{event.action|lower}}">
+          <td>{{event.created_at.strftime('%d/%m/%Y %H:%M:%S')}}</td>
+          <td><strong>{{event.user.full_name}}</strong><small>{{event.user.username}}</small></td>
+          <td>{{'Dueño' if event.user.role == 'owner' else 'Empleado'}}</td>
+          <td><span class="activity-name">{{activity_labels.get(event.action, event.action.replace('_',' ').title())}}</span></td>
+          <td>{{event.entity}} #{{event.entity_id}}</td>
+          <td>{{event.details}}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6">No hay actividad para los filtros seleccionados.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
