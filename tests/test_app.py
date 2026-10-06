@@ -3,7 +3,7 @@
 from datetime import datetime
 from io import BytesIO
 
-from app import Customer, Payment, Product, Sale, SaleItem, User, create_app, db
+from app import AuditEvent, Customer, Payment, Product, Sale, SaleItem, User, create_app, db
 
 
 def app_client(extra_config=None):
@@ -23,6 +23,149 @@ def login(client, username="employee"):
     return client.post("/login", data={"username": username, "password": "secret"}, follow_redirects=True)
 
 
+def test_owner_creates_a_personal_employee_account_that_can_log_in():
+    client, app = app_client(); login(client, "owner")
+    response = client.post("/employees", data={
+        "first_name": "Lucía", "last_name": "Gómez", "dni": "30111222",
+        "phone": "11 5555 9876", "email": "lucia@example.com",
+        "address": "Av. Siempre Viva 123", "username": "lucia.gomez",
+        "password": "ClaveSegura123", "role": "employee",
+    }, follow_redirects=True)
+    assert response.status_code == 200
+    assert "Cuenta creada correctamente." in response.get_data(as_text=True)
+    with app.app_context():
+        user = User.query.filter_by(username="lucia.gomez").one()
+        assert (user.first_name, user.last_name, user.dni, user.phone) == ("Lucía", "Gómez", "30111222", "11 5555 9876")
+        assert (user.email, user.address, user.role) == ("lucia@example.com", "Av. Siempre Viva 123", "employee")
+        assert user.password_hash != "ClaveSegura123" and user.verify_password("ClaveSegura123")
+        assert AuditEvent.query.filter_by(action="CREAR_CUENTA", entity_id=str(user.id)).one().user.username == "owner"
+    client.get("/logout")
+    response = client.post("/login", data={"username":"lucia.gomez", "password":"ClaveSegura123"}, follow_redirects=True)
+    assert response.status_code == 200 and "Nueva venta" in response.get_data(as_text=True)
+
+
+def test_employee_cannot_manage_accounts_or_view_account_activity():
+    client, _ = app_client(); login(client)
+    assert client.get("/employees").status_code == 403
+    assert client.post("/employees", data={}).status_code == 403
+    assert "Empleados" not in client.get("/").get_data(as_text=True)
+
+
+def test_login_logout_and_employee_operations_are_recorded_for_the_owner():
+    client, app = app_client(); login(client)
+    sale = client.post("/sales", json={
+        "items":[{"product_id":1, "presentation":"CAJA", "quantity":1}],
+        "payments":[{"method":"EFECTIVO", "amount":"1000"}],
+    })
+    assert sale.status_code == 200
+    client.get("/logout")
+    with app.app_context():
+        employee = User.query.filter_by(username="employee").one()
+        actions = [event.action for event in AuditEvent.query.filter_by(user_id=employee.id).order_by(AuditEvent.id)]
+        assert actions == ["INICIAR_SESION", "CONFIRMAR_VENTA", "CERRAR_SESION"]
+        assert employee.last_login_at is not None and employee.last_logout_at is not None
+    login(client, "owner")
+    response = client.get("/employees?user_id=2")
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Inicio de sesión" in html and "Venta realizada" in html and "Cierre de sesión" in html
+    assert "employee" in html and "Empleado" in html
+
+
+def test_account_form_preserves_data_and_reports_duplicates_before_creating():
+    client, app = app_client(); login(client, "owner")
+    with app.app_context():
+        employee = User.query.filter_by(username="employee").one()
+        employee.dni = "12345678"; employee.email = "empleado@example.com"; db.session.commit()
+    response = client.post("/employees", data={
+        "first_name":"Ana", "last_name":"Pérez", "dni":"12345678", "phone":"123",
+        "email":"empleado@example.com", "address":"Calle 1", "username":"employee",
+        "password":"123", "role":"invalid",
+    })
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert 'value="Ana"' in html and 'value="Pérez"' in html and 'value="Calle 1"' in html
+    assert "Ya existe una cuenta con este DNI." in html
+    assert "Ya existe una cuenta con este correo." in html
+    assert "Este usuario ya existe." in html
+    assert "El teléfono debe contener entre 8 y 15 números" in html
+    assert "La contraseña debe tener entre 8 y 128 caracteres." in html
+    assert "Seleccioná un tipo de cuenta válido." in html
+
+
+def test_owner_deletes_employee_without_erasing_sales_or_activity():
+    client, app = app_client(); login(client, "employee")
+    response = client.post("/sales", json={
+        "items":[{"product_id":1, "presentation":"CAJA", "quantity":1}],
+        "payments":[{"method":"EFECTIVO", "amount":"1000"}],
+    })
+    assert response.status_code == 200
+    client.get("/logout"); login(client, "owner")
+    response = client.post("/employees/2/delete", follow_redirects=True)
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Cuenta eliminada. Sus ventas y registros de actividad se conservaron." in html
+    assert "Historial conservado" in html
+    with app.app_context():
+        employee = db.session.get(User, 2)
+        assert employee is not None and not employee.active
+        assert Sale.query.filter_by(user_id=employee.id).count() == 1
+        assert AuditEvent.query.filter_by(user_id=employee.id, action="CONFIRMAR_VENTA").count() == 1
+        removal = AuditEvent.query.filter_by(action="ELIMINAR_CUENTA", entity_id="2").one()
+        assert removal.user_id == 1
+    client.get("/logout")
+    response = client.post("/login", data={"username":"employee", "password":"secret"}, follow_redirects=True)
+    assert "Usuario o contraseña incorrectos." in response.get_data(as_text=True)
+
+
+def test_account_deletion_is_owner_only_and_protects_current_account():
+    client, app = app_client(); login(client, "employee")
+    assert client.post("/employees/1/delete").status_code == 403
+    client.get("/logout"); login(client, "owner")
+    response = client.post("/employees/1/delete", follow_redirects=True)
+    assert "No podés eliminar la cuenta con la que estás conectado." in response.get_data(as_text=True)
+    assert client.get("/employees/99999/delete").status_code == 405
+    assert client.post("/employees/99999/delete").status_code == 404
+    with app.app_context():
+        assert db.session.get(User, 1).active
+
+
+def test_account_form_validates_personal_data_and_password_complexity():
+    client, app = app_client(); login(client, "owner")
+    base = {
+        "first_name":"A", "last_name":"B", "dni":"12AB", "phone":"123-45",
+        "email":"correo-invalido", "address":"123", "username":"x",
+        "password":"solominusculas1", "role":"employee",
+    }
+    response = client.post("/employees", data=base)
+    html = response.get_data(as_text=True)
+    for message in [
+        "El nombre debe tener entre 2 y 100 caracteres.",
+        "El apellido debe tener entre 2 y 100 caracteres.",
+        "El DNI debe contener entre 7 y 9 números.",
+        "El teléfono debe contener entre 8 y 15 números",
+        "Ingresá un correo electrónico válido.",
+        "La dirección debe tener entre 5 y 250 caracteres.",
+        "Usá entre 3 y 60 letras",
+        "La contraseña debe incluir al menos una mayúscula, una minúscula y un número.",
+    ]:
+        assert message in html
+    with app.app_context():
+        assert User.query.count() == 2
+
+    for password in ["SINMINUSCULAS1", "sinmayusculas1", "SinNumero"]:
+        payload = {
+            "first_name":"Juan", "last_name":"Pérez", "dni":"33.333.333",
+            "phone":"+54 (11) 5555-1234", "email":"juan@example.com",
+            "address":"Calle 123", "username":"juan.perez", "password":password,
+            "role":"employee",
+        }
+        response = client.post("/employees", data=payload)
+        assert "La contraseña debe incluir al menos una mayúscula, una minúscula y un número." in response.get_data(as_text=True)
+    with app.app_context():
+        assert User.query.count() == 2
+
+
 def test_sale_updates_stock():
     client, app = app_client(); login(client)
     response = client.post("/sales", json={"items":[{"product_id":1,"presentation":"CAJA","quantity":2}],"payments":[{"method":"EFECTIVO","amount":"2000"}]})
@@ -39,6 +182,73 @@ def test_sale_rejects_insufficient_stock():
 def test_employee_cannot_edit_products():
     client, _ = app_client(); login(client)
     assert client.get("/products/1/edit").status_code == 403
+
+
+def test_owner_records_box_and_unit_losses_with_account_date_and_reason():
+    from app import InventoryMovement
+    client, app = app_client(); login(client, "owner")
+    with app.app_context():
+        product = db.session.get(Product, 1)
+        product.units_per_box = 10; product.closed_boxes = 5; product.loose_units = 0
+        product.has_box_presentation = True; product.sync_stock(); db.session.commit()
+
+    response = client.post("/products/1/loss", data={
+        "presentation":"CAJA", "quantity":"2", "loss_type":"ROTURA",
+        "reason_detail":"Las cajas se mojaron durante la descarga.",
+    }, follow_redirects=True)
+    assert response.status_code == 200
+    assert "Merma registrada y stock actualizado correctamente." in response.get_data(as_text=True)
+    with app.app_context():
+        product = db.session.get(Product, 1)
+        assert (product.closed_boxes, product.loose_units, product.available_units) == (3, 0, 30)
+        movement = InventoryMovement.query.filter_by(movement_type="MERMA").one()
+        assert movement.quantity == -20 and movement.user_id == 1
+        assert movement.created_at is not None and "Rotura" in movement.reason and "mojaron" in movement.reason
+        event = AuditEvent.query.filter_by(action="REGISTRAR_MERMA").one()
+        assert event.user_id == 1 and event.created_at is not None
+        assert "-2 caja(s)" in event.details and "stock 50->30" in event.details
+
+    response = client.post("/products/1/loss", data={
+        "presentation":"UNIDAD", "quantity":"12", "loss_type":"DESPERFECTO",
+        "reason_detail":"Las unidades tienen el mango quebrado.",
+    }, follow_redirects=True)
+    assert response.status_code == 200
+    with app.app_context():
+        product = db.session.get(Product, 1)
+        assert (product.closed_boxes, product.loose_units, product.available_units) == (1, 8, 18)
+        movements = InventoryMovement.query.filter_by(movement_type="MERMA").order_by(InventoryMovement.id).all()
+        assert len(movements) == 2 and movements[1].quantity == -12
+        assert AuditEvent.query.filter_by(action="REGISTRAR_MERMA").count() == 2
+    report = client.get("/reports/sales?status=&activity_group=BAJAS").get_data(as_text=True)
+    assert "Merma / producto roto" in report and "mango quebrado" in report
+    report = client.get("/reports/sales?action=REGISTRAR_MERMA").get_data(as_text=True)
+    assert "Detalle de mermas" in report and "Cantidad descontada" in report
+    assert "Martillo" in report and "Código MART-1" in report and "owner" in report
+    assert "Rotura" in report and "cajas se mojaron" in report
+    assert "Desperfecto" in report and "mango quebrado" in report
+    assert "20 unidades" in report and "12 unidades" in report
+    assert "20.000 unidades" not in report and "12.000 unidades" not in report
+    assert "Dinero ingresado por medio de pago" not in report
+
+
+def test_product_loss_rejects_invalid_or_excessive_quantity_and_is_owner_only():
+    from app import InventoryMovement
+    client, app = app_client(); login(client, "employee")
+    assert client.get("/products/1/loss").status_code == 403
+    assert client.post("/products/1/loss", data={}).status_code == 403
+    client.get("/logout"); login(client, "owner")
+    for payload, message in [
+        ({"presentation":"CAJA", "quantity":"99", "loss_type":"ROTURA", "reason_detail":"Cantidad superior al stock."}, "No hay suficientes cajas cerradas"),
+        ({"presentation":"UNIDAD", "quantity":"1", "loss_type":"ROTURA", "reason_detail":"mal"}, "entre 5 y 300 caracteres"),
+        ({"presentation":"UNIDAD", "quantity":"0", "loss_type":"DESPERFECTO", "reason_detail":"Cantidad inválida."}, "debe ser mayor a cero"),
+    ]:
+        response = client.post("/products/1/loss", data=payload)
+        assert response.status_code == 200 and message in response.get_data(as_text=True)
+    with app.app_context():
+        product = db.session.get(Product, 1)
+        assert product.available_units == 5
+        assert InventoryMovement.query.filter_by(movement_type="MERMA").count() == 0
+        assert AuditEvent.query.filter_by(action="REGISTRAR_MERMA").count() == 0
 
 
 def test_unit_sale_opens_a_box_and_keeps_loose_units():
@@ -404,6 +614,57 @@ def test_sales_report_has_date_range_selector():
     assert b'name="end_date"' in response.data
     assert b"Imprimir resumen por fecha" in response.data
     assert b"Imprimir cierre de hoy" not in response.data
+
+
+def test_owner_report_filters_sales_payments_and_activity_by_account_and_period():
+    client, app = app_client(); login(client, "owner")
+    with app.app_context():
+        employee_sale = Sale(user_id=2, total=150, status="CONFIRMADA", created_at=datetime(2026, 9, 20, 10, 0))
+        owner_sale = Sale(user_id=1, total=200, status="CONFIRMADA", created_at=datetime(2026, 9, 20, 11, 0))
+        outside_sale = Sale(user_id=2, total=300, status="CONFIRMADA", created_at=datetime(2026, 9, 21, 10, 0))
+        db.session.add_all([employee_sale, owner_sale, outside_sale]); db.session.flush()
+        db.session.add_all([
+            SaleItem(sale_id=employee_sale.id, product_id=1, quantity=1, sale_quantity=1, presentation="UNIDAD", unit_price=150, subtotal=150),
+            SaleItem(sale_id=owner_sale.id, product_id=1, quantity=2, sale_quantity=2, presentation="UNIDAD", unit_price=100, subtotal=200),
+            SaleItem(sale_id=outside_sale.id, product_id=1, quantity=3, sale_quantity=3, presentation="UNIDAD", unit_price=100, subtotal=300),
+            Payment(sale_id=employee_sale.id, method="EFECTIVO", amount=100),
+            Payment(sale_id=employee_sale.id, method="TRANSFERENCIA", amount=50),
+            Payment(sale_id=owner_sale.id, method="CREDITO", amount=200),
+            Payment(sale_id=outside_sale.id, method="EFECTIVO", amount=300),
+            AuditEvent(user_id=2, action="EDITAR_PRODUCTO", entity="product", entity_id="1", details="cambio realizado por empleado", created_at=datetime(2026, 9, 20, 10, 5)),
+            AuditEvent(user_id=1, action="CREAR_PRODUCTO", entity="product", entity_id="2", details="alta realizada por dueño", created_at=datetime(2026, 9, 20, 11, 5)),
+            AuditEvent(user_id=2, action="EDITAR_PRODUCTO", entity="product", entity_id="3", details="cambio fuera del período", created_at=datetime(2026, 9, 21, 10, 5)),
+        ])
+        db.session.commit()
+        employee_sale_id, owner_sale_id, outside_sale_id = employee_sale.id, owner_sale.id, outside_sale.id
+
+    response = client.get("/reports/sales?start_date=2026-09-20&end_date=2026-09-20&user_id=2&payment_method=EFECTIVO&status=CONFIRMADA")
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "Resumen detallado" in html and "Detalle de cambios y actividad por cuenta" in html
+    assert f"Ticket N.º {employee_sale_id}" in html
+    assert f"Ticket N.º {owner_sale_id}" not in html and f"Ticket N.º {outside_sale_id}" not in html
+    assert "Efectivo" in html and "$ 100,00" in html
+    assert "Dinero confirmado" in html and "$ 150,00" in html
+    assert 'option value="2" selected' in html and 'option value="EFECTIVO" selected' in html
+
+    response = client.get("/reports/sales?start_date=2026-09-20&end_date=2026-09-20&user_id=2&activity_group=MODIFICACIONES")
+    html = response.get_data(as_text=True)
+    assert "cambio realizado por empleado" in html
+    assert "alta realizada por dueño" not in html and "cambio fuera del período" not in html
+    assert "Acciones encontradas" in html and "Dinero ingresado por medio de pago" not in html
+
+
+def test_detailed_account_activity_in_reports_is_visible_only_to_owner():
+    client, app = app_client()
+    with app.app_context():
+        db.session.add(AuditEvent(user_id=2, action="EDITAR_PRODUCTO", entity="product", entity_id="1", details="detalle reservado al dueño"))
+        db.session.commit()
+    login(client, "employee")
+    html = client.get("/reports/sales").get_data(as_text=True)
+    assert "Detalle de cambios y actividad por cuenta" not in html
+    assert "detalle reservado al dueño" not in html
+    assert 'name="user_id"' not in html and 'name="activity_group"' not in html
 
 
 def test_range_report_only_includes_sales_between_selected_dates():
@@ -782,6 +1043,29 @@ def test_product_barcode_requires_login_and_handles_invalid_codes():
         assert response.status_code == 422
         assert 'Imprimir etiqueta' not in response.get_data(as_text=True)
         assert 'data:image/svg' not in response.get_data(as_text=True)
+
+
+def test_owner_generates_random_code_skipping_existing_products(monkeypatch):
+    client, app = app_client(); login(client, 'owner')
+    with app.app_context():
+        product = db.session.get(Product, 1)
+        product.code = '000000000123'
+        db.session.commit()
+    values = iter([123, 456])
+    monkeypatch.setattr('app.secrets.randbelow', lambda limit: next(values))
+    response = client.get('/products/generate-code')
+    assert response.status_code == 200
+    assert response.get_json()['code'] == '000000000456'
+
+
+def test_generate_product_code_is_owner_only_and_button_is_on_new_form():
+    client, _ = app_client(); login(client)
+    assert client.get('/products/generate-code').status_code == 403
+    client.get('/logout'); login(client, 'owner')
+    new_form = client.get('/products/new').get_data(as_text=True)
+    edit_form = client.get('/products/1/edit').get_data(as_text=True)
+    assert 'id="generate-product-code"' in new_form
+    assert 'id="generate-product-code"' not in edit_form
 
 
 def test_owner_deletes_customer_without_erasing_sales_or_debts():
