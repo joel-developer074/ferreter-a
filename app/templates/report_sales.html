@@ -1,64 +1,84 @@
-{# Resumen de ventas por día y producto con selección de fechas para reportes. #}
+{# Centro de reportes con filtros combinables de ventas, cobros y auditoría. #}
 {% extends 'base.html' %}
 {% block content %}
-<div class="title-row">
-  <h1>Resumen de ventas</h1>
-  <form class="date-range-form" method="get" action="{{ url_for('sales_range_report') }}">
-    <label>Desde
-      <input type="date" name="start_date" value="{{ today }}" required>
-    </label>
-    <label>Hasta
-      <input type="date" name="end_date" value="{{ today }}" required>
-    </label>
-    <button type="submit" class="action-print">Imprimir resumen por fecha</button>
+<div class="title-row report-title-row">
+  <div><h1>Resumen detallado</h1><p>Consultá ventas, ingresos y operaciones realizadas en el sistema.</p></div>
+  <button type="button" class="action-print" onclick="window.print()">Imprimir resumen por fecha</button>
+</div>
+
+<section class="panel report-filter-panel">
+  <h2>Buscar información</h2>
+  <form class="report-filter-form" method="get" action="{{ url_for('sales_report') }}">
+    <label>Desde<input type="date" name="start_date" value="{{ start_value }}"></label>
+    <label>Hasta<input type="date" name="end_date" value="{{ end_value }}"></label>
+    {% if owner_view %}<label>Cuenta
+      <select name="user_id"><option value="">Todas las cuentas</option>{% for account in accounts %}<option value="{{account.id}}" {% if selected_user == account.id|string %}selected{% endif %}>{{account.full_name}} ({{account.username}}) · {{'Activa' if account.active else 'Eliminada'}}</option>{% endfor %}</select>
+    </label>{% endif %}
+    <label>Medio de pago<select name="payment_method"><option value="">Todos</option>{% for method in payment_methods %}<option value="{{method}}" {% if selected_payment == method %}selected{% endif %}>{{method.replace('_',' ').title()}}</option>{% endfor %}</select></label>
+    <label>Estado de venta<select name="status"><option value="" {% if not selected_status %}selected{% endif %}>Confirmadas y anuladas</option><option value="CONFIRMADA" {% if selected_status == 'CONFIRMADA' %}selected{% endif %}>Confirmadas</option><option value="ANULADA" {% if selected_status == 'ANULADA' %}selected{% endif %}>Anuladas</option></select></label>
+    {% if owner_view %}<label>Grupo de actividad<select name="activity_group"><option value="">Todos los cambios</option><option value="ALTAS" {% if selected_group == 'ALTAS' %}selected{% endif %}>Agregar / altas</option><option value="MODIFICACIONES" {% if selected_group == 'MODIFICACIONES' %}selected{% endif %}>Editar / reponer</option><option value="BAJAS" {% if selected_group == 'BAJAS' %}selected{% endif %}>Eliminar / quitar / anular</option><option value="VENTAS" {% if selected_group == 'VENTAS' %}selected{% endif %}>Ventas y devoluciones</option><option value="SESIONES" {% if selected_group == 'SESIONES' %}selected{% endif %}>Conexiones</option></select></label>
+    <label>Acción exacta<select name="action"><option value="">Todas</option>{% for action in actions %}<option value="{{action}}" {% if selected_action == action %}selected{% endif %}>{{activity_labels.get(action, action.replace('_',' ').title())}}</option>{% endfor %}</select></label>{% endif %}
+    <label class="report-search-field">Palabra, ticket, cliente o producto<input name="q" value="{{search}}" placeholder="Ej.: martillo, cliente, producto #4"></label>
+    <div class="report-filter-actions"><button type="submit" class="action-search">Buscar</button><a class="button secondary" href="{{url_for('sales_report')}}">Limpiar filtros</a></div>
   </form>
+</section>
+
+<div class="cards report-cards">
+  {% if activity_focus %}<article><span>Acciones encontradas</span><strong>{{ activities|length }}</strong></article>
+  {% else %}<article><span>Dinero confirmado</span><strong>{{ total|ars }}</strong></article><article><span>Ventas confirmadas</span><strong>{{ count }}</strong></article>{% if owner_view %}<article><span>Acciones registradas</span><strong>{{ activities|length }}</strong></article>{% endif %}{% endif %}
 </div>
 
-<div class="cards">
-  <article><span>Total confirmado</span><strong>{{ total|ars }}</strong></article>
-  <article><span>Cantidad de ventas</span><strong>{{ count }}</strong></article>
-</div>
+{% if activity_focus %}
+  {% if selected_action == 'REGISTRAR_MERMA' %}
+  <section class="panel report-section loss-results-section">
+    <div class="result-heading"><div><h2>Detalle de mermas</h2><p>Productos descontados por rotura, desperfecto u otro motivo.</p></div><span class="result-count">{{losses|length}} registro{% if losses|length != 1 %}s{% endif %}</span></div>
+    <div class="table-scroll"><table class="loss-results-table">
+      <thead><tr><th>Fecha y hora</th><th>Producto</th><th>Cantidad descontada</th><th>Cuenta utilizada</th><th>Causa</th><th>Descripción</th></tr></thead>
+      <tbody>{% for movement in losses %}{% set reason_parts = movement.reason.split(' — ', 1) %}<tr>
+        <td>{{movement.created_at.strftime('%d/%m/%Y %H:%M:%S')}}</td>
+        <td><strong>{{movement.product.name}}</strong><small>Código {{movement.product.code}}</small></td>
+        <td><strong>{{(0 - movement.quantity)|int}} unidades</strong></td>
+        <td><strong>{{movement.user.full_name}}</strong><small>{{movement.user.username}} · {{'Dueño' if movement.user.role == 'owner' else 'Empleado'}}{% if not movement.user.active %} · Cuenta eliminada{% endif %}</small></td>
+        <td><span class="loss-cause">{{reason_parts[0]}}</span></td><td>{{reason_parts[1] if reason_parts|length > 1 else movement.reason}}</td>
+      </tr>{% else %}<tr><td colspan="6">No hay mermas para los filtros seleccionados.</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </section>
+  {% else %}{% include '_report_activity_table.html' %}{% endif %}
+{% endif %}
 
-<h2>Totales por medio de pago</h2>
-<table>
-  <thead><tr><th>Medio</th><th>Total</th></tr></thead>
-  <tbody>
-    {% for method, amount in by_payment %}
-      <tr><td>{{ method.title() }}</td><td>{{ amount|ars }}</td></tr>
-    {% else %}
-      <tr><td colspan="2">Sin ventas.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+{% if not activity_focus %}
+<section class="panel report-section">
+  <h2>Dinero ingresado por medio de pago</h2>
+  <p>Los importes corresponden únicamente a ventas confirmadas dentro de los filtros seleccionados.</p>
+  <div class="payment-summary-grid">
+    {% for method, amount in by_payment %}<article><span>{{method.replace('_',' ').title()}}</span><strong>{{amount|ars}}</strong></article>
+    {% else %}<p class="empty-state">No hay ingresos confirmados para esta búsqueda.</p>{% endfor %}
+  </div>
+</section>
+
+<section class="panel report-section">
+  <h2>Detalle de ventas</h2>
+  <div class="table-scroll"><table class="detailed-sales-table">
+    <thead><tr><th>Fecha / ticket</th><th>Cuenta</th><th>Cliente</th><th>Productos</th><th>Medios de pago</th><th>Estado</th><th>Total</th></tr></thead>
+    <tbody>{% for sale in sales %}<tr class="{{'cancelled-sale' if sale.status == 'ANULADA'}}">
+      <td><strong>{{sale.created_at.strftime('%d/%m/%Y %H:%M')}}</strong><small><a href="{{url_for('sale_receipt',sale_id=sale.id)}}">Ticket N.º {{sale.id}}</a></small></td>
+      <td><strong>{{sale.user.full_name}}</strong><small>{{sale.user.username}} · {{'Dueño' if sale.user.role == 'owner' else 'Empleado'}}</small></td>
+      <td>{% if sale.customer %}{{sale.customer.name}}{% if sale.customer.dni %}<small>DNI {{sale.customer.dni}}</small>{% endif %}{% else %}Sin cliente{% endif %}</td>
+      <td>{% for item in sale.items %}<div class="report-sale-item"><strong>{{item.product.name}}</strong><small>{{item.product.code}} · {{item.sale_quantity if item.sale_quantity is not none else item.quantity}} {{'caja(s)' if item.presentation == 'CAJA' else 'unidad(es)'}} · {{item.subtotal|ars}}</small></div>{% endfor %}</td>
+      <td>{% for payment in sale.payments %}<div>{{payment.method.replace('_',' ').title()}}: <strong>{{payment.amount|ars}}</strong></div>{% endfor %}{% if sale.change_due %}<small>Vuelto: {{sale.change_due|ars}}</small>{% endif %}</td>
+      <td><span class="sale-status status-{{sale.status|lower}}">{{sale.status.title()}}</span>{% if sale.cancellation_reason %}<small>{{sale.cancellation_reason}}</small>{% endif %}</td>
+      <td><strong>{{sale.total|ars}}</strong></td>
+    </tr>{% else %}<tr><td colspan="7">No hay ventas para los filtros seleccionados.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+{% if owner_view %}{% include '_report_activity_table.html' %}{% endif %}
 
 <h2>Ventas separadas por día</h2>
-{% for day in daily_summaries %}
-  <section class="daily-summary">
-    <div class="title-row daily-title">
-      <div>
-        <h3>{{ day.date.strftime('%d/%m/%Y') }}</h3>
-        <span>{{ day.sale_count }} venta{% if day.sale_count != 1 %}s{% endif %} · Total {{ day.total|ars }}</span>
-      </div>
-      <a class="button action-print" href="{{ url_for('daily_sales_report', report_date=day.date.strftime('%Y-%m-%d')) }}">Imprimir cierre diario</a>
-    </div>
-    <table>
-      <thead><tr><th>Código</th><th>Producto</th><th>Presentación</th><th>Cantidad vendida</th><th>Importe</th></tr></thead>
-      <tbody>
-        {% for product in day.products %}
-          <tr>
-            <td>{{ product.code }}</td>
-            <td>{{ product.name }}</td>
-            <td>{{ 'Caja' if product.presentation == 'CAJA' else 'Unidad' }}</td>
-            <td>{{ product.quantity }}</td>
-            <td>{{ product.amount|ars }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-      <tfoot><tr><th colspan="4">Total del día</th><th>{{ day.total|ars }}</th></tr></tfoot>
-    </table>
-    {% include '_report_sales_customers.html' %}
-  </section>
-{% else %}
-  <p class="empty-state">Todavía no hay ventas confirmadas.</p>
-{% endfor %}
+{% for day in daily_summaries %}<section class="daily-summary">
+  <div class="title-row daily-title"><div><h3>{{day.date.strftime('%d/%m/%Y')}}</h3><span>{{day.sale_count}} venta{% if day.sale_count != 1 %}s{% endif %} · Total {{day.total|ars}}</span></div><a class="button action-print" href="{{url_for('daily_sales_report',report_date=day.date.strftime('%Y-%m-%d'))}}">Imprimir cierre diario</a></div>
+  <table><thead><tr><th>Código</th><th>Producto</th><th>Presentación</th><th>Cantidad vendida</th><th>Importe</th></tr></thead><tbody>{% for product in day.products %}<tr><td>{{product.code}}</td><td>{{product.name}}</td><td>{{'Caja' if product.presentation == 'CAJA' else 'Unidad'}}</td><td>{{product.quantity}}</td><td>{{product.amount|ars}}</td></tr>{% endfor %}</tbody><tfoot><tr><th colspan="4">Total del día</th><th>{{day.total|ars}}</th></tr></tfoot></table>
+  {% include '_report_sales_customers.html' %}
+</section>{% else %}<p class="empty-state">No hay ventas confirmadas para los filtros seleccionados.</p>{% endfor %}
+{% endif %}
 {% endblock %}
