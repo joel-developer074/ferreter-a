@@ -1,6 +1,8 @@
 """Define los modelos, las rutas y la lógica de gestión de FerreSoft."""
 
 import os
+import re
+import secrets
 import unicodedata
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -57,6 +59,19 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False)  # owner | employee
     active = db.Column(db.Boolean, default=True, nullable=False)
+    first_name = db.Column(db.String(100), default="", nullable=False)
+    last_name = db.Column(db.String(100), default="", nullable=False)
+    dni = db.Column(db.String(30), unique=True, nullable=True)
+    phone = db.Column(db.String(60), default="", nullable=False)
+    email = db.Column(db.String(160), unique=True, nullable=True)
+    address = db.Column(db.String(250), default="", nullable=False)
+    created_at = db.Column(db.DateTime, default=local_now, nullable=True)
+    last_login_at = db.Column(db.DateTime, nullable=True)
+    last_logout_at = db.Column(db.DateTime, nullable=True)
+
+    @property
+    def full_name(self):
+        return " ".join(part for part in (self.first_name, self.last_name) if part).strip() or self.username
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -143,6 +158,15 @@ def minimum_stock_value(form):
 
 def normalized_product_name(name):
     return unicodedata.normalize("NFC", " ".join(name.split())).casefold()
+
+
+def generate_unique_product_code():
+    """Genera un código numérico de 12 dígitos que no exista en el catálogo."""
+    for _ in range(100):
+        code = f"{secrets.randbelow(10 ** 12):012d}"
+        if Product.query.filter_by(code=code).first() is None:
+            return code
+    raise RuntimeError("No se pudo generar un código único. Intentá nuevamente.")
 
 
 def product_name_options():
@@ -299,6 +323,35 @@ def audit(user, action, entity, entity_id, details):
     db.session.add(AuditEvent(user_id=user.id, action=action, entity=entity, entity_id=str(entity_id), details=details))
 
 
+ACTIVITY_LABELS = {
+    "INICIAR_SESION": "Inicio de sesión",
+    "CERRAR_SESION": "Cierre de sesión",
+    "CREAR_CUENTA": "Alta de cuenta",
+    "ELIMINAR_CUENTA": "Baja de cuenta",
+    "CONFIRMAR_VENTA": "Venta realizada",
+    "ANULAR_VENTA": "Devolución / venta anulada",
+    "REPOSICION": "Reposición de stock",
+    "REGISTRAR_MERMA": "Merma / producto roto",
+    "AJUSTAR_STOCK": "Ajuste de stock",
+    "CREAR_PRODUCTO": "Alta de producto",
+    "EDITAR_PRODUCTO": "Edición de producto",
+    "CAMBIAR_PRECIO": "Cambio de precio",
+    "ELIMINAR_PRODUCTO": "Baja de producto",
+    "CREAR_CLIENTE": "Alta de cliente",
+    "EDITAR_CLIENTE": "Edición de cliente",
+    "ELIMINAR_CLIENTE": "Baja de cliente",
+    "CREAR_PROVEEDOR": "Alta de proveedor",
+    "EDITAR_PROVEEDOR": "Edición de proveedor",
+    "QUITAR_PRODUCTO_PROVEEDOR": "Producto quitado de proveedor",
+    "CREAR_CATEGORIA": "Alta de categoría",
+    "EDITAR_CATEGORIA": "Edición de categoría",
+    "ELIMINAR_CATEGORIA": "Baja de categoría",
+    "CREAR_SUBCATEGORIA": "Alta de subcategoría",
+    "EDITAR_SUBCATEGORIA": "Edición de subcategoría",
+    "ELIMINAR_SUBCATEGORIA": "Baja de subcategoría",
+}
+
+
 def save_product_image(upload):
     """Valida y guarda una imagen con un nombre aleatorio seguro."""
     if not upload or not upload.filename:
@@ -335,6 +388,17 @@ def ensure_schema():
     """Actualiza instalaciones SQLite anteriores sin borrar ventas ni stock."""
     make_subcategories_independent(db.engine)
     additions = {
+        "user": {
+            "first_name": "VARCHAR(100) NOT NULL DEFAULT ''",
+            "last_name": "VARCHAR(100) NOT NULL DEFAULT ''",
+            "dni": "VARCHAR(30)",
+            "phone": "VARCHAR(60) NOT NULL DEFAULT ''",
+            "email": "VARCHAR(160)",
+            "address": "VARCHAR(250) NOT NULL DEFAULT ''",
+            "created_at": "DATETIME",
+            "last_login_at": "DATETIME",
+            "last_logout_at": "DATETIME",
+        },
         "product": {
             "subcategory_id": "INTEGER", "supplier_id": "INTEGER", "units_per_box": "INTEGER NOT NULL DEFAULT 1",
             "closed_boxes": "INTEGER NOT NULL DEFAULT 0", "loose_units": "INTEGER NOT NULL DEFAULT 0",
@@ -365,9 +429,9 @@ def ensure_schema():
 
 def seed_data():
     if not User.query.first():
-        owner = User(username="dueno", role="owner")
+        owner = User(username="dueno", role="owner", first_name="Dueño", last_name="Principal")
         owner.set_password("Cambiar123!")
-        employee = User(username="empleado", role="employee")
+        employee = User(username="empleado", role="employee", first_name="Empleado", last_name="Inicial")
         employee.set_password("Empleado123!")
         db.session.add_all([owner, employee])
         db.session.commit()
@@ -409,13 +473,136 @@ def create_app(test_config=None):
             user = User.query.filter_by(username=request.form.get("username", "").strip()).first()
             if user and user.active and user.verify_password(request.form.get("password", "")):
                 session.clear(); session["user_id"] = user.id
+                user.last_login_at = local_now()
+                audit(user, "INICIAR_SESION", "session", user.id, "Ingreso correcto al sistema")
+                db.session.commit()
                 return redirect(url_for("dashboard"))
             flash("Usuario o contraseña incorrectos.", "error")
         return render_template("login.html")
 
     @app.route("/logout")
     def logout():
+        user = current_user()
+        if user:
+            user.last_logout_at = local_now()
+            audit(user, "CERRAR_SESION", "session", user.id, "Cierre de sesión")
+            db.session.commit()
         session.clear(); return redirect(url_for("login"))
+
+    @app.route("/employees", methods=["GET", "POST"])
+    @owner_required
+    def employees():
+        form_data, field_errors = {}, {}
+        if request.method == "POST":
+            form_data = request.form.to_dict()
+            first_name = " ".join(request.form.get("first_name", "").split())
+            last_name = " ".join(request.form.get("last_name", "").split())
+            raw_dni = request.form.get("dni", "").strip()
+            dni = re.sub(r"\D", "", raw_dni)
+            phone = request.form.get("phone", "").strip()
+            email = request.form.get("email", "").strip().lower()
+            address = " ".join(request.form.get("address", "").split())
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "")
+            role = request.form.get("role", "")
+
+            required_fields = {
+                "first_name": (first_name, "Ingresá el nombre."),
+                "last_name": (last_name, "Ingresá el apellido."),
+                "dni": (raw_dni, "Ingresá el DNI."),
+                "phone": (phone, "Ingresá el teléfono o celular."),
+                "email": (email, "Ingresá el correo electrónico."),
+                "address": (address, "Ingresá la dirección."),
+                "username": (username, "Ingresá un usuario."),
+                "password": (password, "Ingresá una contraseña."),
+            }
+            for field, (value, message) in required_fields.items():
+                if not value:
+                    field_errors[field] = message
+            if first_name and not 2 <= len(first_name) <= 100:
+                field_errors["first_name"] = "El nombre debe tener entre 2 y 100 caracteres."
+            if last_name and not 2 <= len(last_name) <= 100:
+                field_errors["last_name"] = "El apellido debe tener entre 2 y 100 caracteres."
+            if raw_dni and (not re.fullmatch(r"[0-9.\s-]+", raw_dni) or not 7 <= len(dni) <= 9):
+                field_errors["dni"] = "El DNI debe contener entre 7 y 9 números."
+            if dni and User.query.filter_by(dni=dni).first():
+                field_errors["dni"] = "Ya existe una cuenta con este DNI."
+            phone_digits = re.sub(r"\D", "", phone)
+            if phone and (len(phone) > 30 or not re.fullmatch(r"[+0-9()\s-]+", phone) or not 8 <= len(phone_digits) <= 15):
+                field_errors["phone"] = "El teléfono debe contener entre 8 y 15 números; podés usar +, espacios, paréntesis o guiones."
+            if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+                field_errors["email"] = "Ingresá un correo electrónico válido."
+            if email and len(email) > 160:
+                field_errors["email"] = "El correo no puede superar 160 caracteres."
+            if email and User.query.filter(func.lower(User.email) == email).first():
+                field_errors["email"] = "Ya existe una cuenta con este correo."
+            if address and not 5 <= len(address) <= 250:
+                field_errors["address"] = "La dirección debe tener entre 5 y 250 caracteres."
+            if username and not re.fullmatch(r"[A-Za-z0-9._-]{3,60}", username):
+                field_errors["username"] = "Usá entre 3 y 60 letras, números, puntos, guiones o guiones bajos."
+            if username and User.query.filter(func.lower(User.username) == username.lower()).first():
+                field_errors["username"] = "Este usuario ya existe."
+            if password and not 8 <= len(password) <= 128:
+                field_errors["password"] = "La contraseña debe tener entre 8 y 128 caracteres."
+            elif password and not (re.search(r"[A-Z]", password) and re.search(r"[a-z]", password) and re.search(r"\d", password)):
+                field_errors["password"] = "La contraseña debe incluir al menos una mayúscula, una minúscula y un número."
+            if role not in {"owner", "employee"}:
+                field_errors["role"] = "Seleccioná un tipo de cuenta válido."
+
+            if not field_errors:
+                try:
+                    new_user = User(
+                        first_name=first_name, last_name=last_name, dni=dni, phone=phone,
+                        email=email, address=address, username=username, role=role,
+                    )
+                    new_user.set_password(password)
+                    db.session.add(new_user); db.session.flush()
+                    audit(current_user(), "CREAR_CUENTA", "user", new_user.id, f"{new_user.full_name} · {new_user.username} · {new_user.role}")
+                    db.session.commit()
+                    flash("Cuenta creada correctamente.", "success")
+                    return redirect(url_for("employees"))
+                except Exception as exc:
+                    current_app.logger.exception("Error al crear una cuenta")
+                    db.session.rollback()
+                    flash(f"No se pudo crear la cuenta: {exc}", "error")
+            else:
+                flash("Revisá los campos marcados.", "error")
+
+        selected_user = request.args.get("user_id", "").strip()
+        selected_action = request.args.get("action", "").strip()
+        activity_query = AuditEvent.query
+        if selected_user.isdigit():
+            activity_query = activity_query.filter_by(user_id=int(selected_user))
+        if selected_action:
+            activity_query = activity_query.filter_by(action=selected_action)
+        activities = activity_query.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).all()
+        accounts = User.query.order_by(User.last_name, User.first_name, User.username).all()
+        actions = [row[0] for row in db.session.query(AuditEvent.action).distinct().order_by(AuditEvent.action).all()]
+        return render_template(
+            "employees.html", accounts=accounts, activities=activities, actions=actions,
+            activity_labels=ACTIVITY_LABELS, form_data=form_data, field_errors=field_errors,
+            selected_user=selected_user, selected_action=selected_action,
+        )
+
+    @app.post("/employees/<int:user_id>/delete")
+    @owner_required
+    def delete_employee(user_id):
+        account = db.session.get(User, user_id)
+        if not account:
+            abort(404)
+        actor = current_user()
+        if account.id == actor.id:
+            flash("No podés eliminar la cuenta con la que estás conectado.", "error")
+        elif not account.active:
+            flash("La cuenta ya está eliminada.", "error")
+        elif account.role == "owner" and User.query.filter_by(role="owner", active=True).count() <= 1:
+            flash("No se puede eliminar la única cuenta de dueño activa.", "error")
+        else:
+            account.active = False
+            audit(actor, "ELIMINAR_CUENTA", "user", account.id, f"{account.full_name} · {account.username} · {account.role}")
+            db.session.commit()
+            flash("Cuenta eliminada. Sus ventas y registros de actividad se conservaron.", "success")
+        return redirect(url_for("employees"))
 
     @app.route("/products")
     @login_required
@@ -437,6 +624,11 @@ def create_app(test_config=None):
         except ValueError as exc:
             return render_template("product_barcode.html", product=product, barcode_image=None, barcode_error=str(exc)), 422
         return render_template("product_barcode.html", product=product, barcode_image=image, barcode_error=None)
+
+    @app.route("/products/generate-code")
+    @owner_required
+    def product_generate_code():
+        return {"code": generate_unique_product_code()}
 
     @app.route("/products/new", methods=["GET", "POST"])
     @owner_required
@@ -542,6 +734,71 @@ def create_app(test_config=None):
             current_app.logger.exception("Error al procesar %s", request.path)
             db.session.rollback(); flash(f"No se pudo ajustar el stock: {exc}", "error")
         return redirect(url_for("products"))
+
+    @app.route("/products/<int:product_id>/loss", methods=["GET", "POST"])
+    @owner_required
+    def product_loss(product_id):
+        product = db.get_or_404(Product, product_id)
+        if not product.active:
+            flash("No se puede registrar una merma sobre un producto eliminado.", "error")
+            return redirect(url_for("products"))
+        form_data = {}
+        if request.method == "POST":
+            form_data = request.form.to_dict()
+            try:
+                presentation = request.form.get("presentation", "UNIDAD").upper()
+                quantity = int(request.form.get("quantity") or 0)
+                loss_type = request.form.get("loss_type", "").strip().upper()
+                reason_detail = " ".join(request.form.get("reason_detail", "").split())
+                loss_labels = {"ROTURA": "Rotura", "DESPERFECTO": "Desperfecto", "OTRO": "Otro motivo"}
+                if presentation not in {"UNIDAD", "CAJA"}:
+                    raise ValueError("Seleccioná una presentación válida.")
+                if presentation == "CAJA" and not product.has_box_presentation:
+                    raise ValueError("Este producto se administra solamente por unidades.")
+                if quantity <= 0:
+                    raise ValueError("La cantidad a descontar debe ser mayor a cero.")
+                if loss_type not in loss_labels:
+                    raise ValueError("Seleccioná si se trata de una rotura, desperfecto u otro motivo.")
+                if not 5 <= len(reason_detail) <= 300:
+                    raise ValueError("La descripción del motivo debe tener entre 5 y 300 caracteres.")
+
+                stock_before = product.available_units
+                if presentation == "CAJA":
+                    if quantity > product.closed_boxes:
+                        raise ValueError("No hay suficientes cajas cerradas para descontar esa cantidad.")
+                    product.closed_boxes -= quantity
+                    removed_units = quantity * product.units_per_box
+                    quantity_label = f"{quantity} caja(s)"
+                else:
+                    if quantity > product.available_units:
+                        raise ValueError("No hay suficientes unidades disponibles para descontar esa cantidad.")
+                    if product.loose_units < quantity:
+                        boxes_to_open = (quantity - product.loose_units + product.units_per_box - 1) // product.units_per_box
+                        product.closed_boxes -= boxes_to_open
+                        product.loose_units += boxes_to_open * product.units_per_box
+                    product.loose_units -= quantity
+                    removed_units = quantity
+                    quantity_label = f"{quantity} unidad(es)"
+
+                product.sync_stock()
+                reason = f"{loss_labels[loss_type]} — {reason_detail}"
+                actor = current_user()
+                db.session.add(InventoryMovement(
+                    product_id=product.id, user_id=actor.id, quantity=-removed_units,
+                    movement_type="MERMA", reason=reason, reference=None,
+                ))
+                audit(
+                    actor, "REGISTRAR_MERMA", "product", product.id,
+                    f"{product.name}: -{quantity_label} ({removed_units} unidades); {reason}; stock {stock_before}->{product.available_units} unidades",
+                )
+                db.session.commit()
+                flash("Merma registrada y stock actualizado correctamente.", "success")
+                return redirect(url_for("products"))
+            except Exception as exc:
+                current_app.logger.exception("Error al procesar %s", request.path)
+                db.session.rollback()
+                flash(f"No se pudo registrar la merma: {exc}", "error")
+        return render_template("product_loss_form.html", product=product, form_data=form_data)
 
     @app.route("/products/<int:product_id>/restock", methods=["GET", "POST"])
     @owner_required
@@ -870,17 +1127,127 @@ def create_app(test_config=None):
     @app.route("/reports/sales")
     @login_required
     def sales_report():
-        confirmed = Sale.query.filter_by(status="CONFIRMADA")
-        total = confirmed.with_entities(func.coalesce(func.sum(Sale.total), 0)).scalar()
-        by_payment = db.session.query(Payment.method, func.sum(Payment.amount)).join(Sale).filter(Sale.status == "CONFIRMADA").group_by(Payment.method).all()
-        sales = confirmed.order_by(Sale.created_at.desc()).all()
+        owner_view = current_user().role == "owner"
+        start_value = request.args.get("start_date", "").strip()
+        end_value = request.args.get("end_date", "").strip()
+        selected_user = request.args.get("user_id", "").strip() if owner_view else ""
+        selected_payment = request.args.get("payment_method", "").strip().upper()
+        selected_status = request.args.get("status", "CONFIRMADA").strip().upper()
+        selected_action = request.args.get("action", "").strip() if owner_view else ""
+        selected_group = request.args.get("activity_group", "").strip().upper() if owner_view else ""
+        search = request.args.get("q", "").strip()
+
+        start_date = end_date = None
+        try:
+            start_date = date.fromisoformat(start_value) if start_value else None
+            end_date = date.fromisoformat(end_value) if end_value else None
+            if start_date and end_date and start_date > end_date:
+                raise ValueError("La fecha desde no puede ser posterior a la fecha hasta.")
+        except ValueError as exc:
+            flash(str(exc) if "posterior" in str(exc) else "Las fechas seleccionadas no son válidas.", "error")
+            start_date = end_date = None
+            start_value = end_value = ""
+
+        if selected_status not in {"", "CONFIRMADA", "ANULADA"}:
+            selected_status = "CONFIRMADA"
+
+        sales_query = Sale.query
+        if selected_status:
+            sales_query = sales_query.filter(Sale.status == selected_status)
+        if start_date:
+            sales_query = sales_query.filter(Sale.created_at >= datetime.combine(start_date, time.min))
+        if end_date:
+            sales_query = sales_query.filter(Sale.created_at < datetime.combine(end_date, time.min) + timedelta(days=1))
+        if selected_user.isdigit():
+            sales_query = sales_query.filter(Sale.user_id == int(selected_user))
+        if selected_payment:
+            sales_query = sales_query.join(Payment).filter(Payment.method == selected_payment).distinct()
+        sales = sales_query.order_by(Sale.created_at.desc(), Sale.id.desc()).all()
+
+        if search:
+            needle = search.casefold()
+            sales = [sale for sale in sales if needle in " ".join([
+                str(sale.id), sale.status, sale.user.full_name, sale.user.username,
+                sale.customer.name if sale.customer else "sin cliente",
+                " ".join(f"{item.product.code} {item.product.name}" for item in sale.items),
+                " ".join(payment.method for payment in sale.payments),
+            ]).casefold()]
+
+        confirmed_sales = [sale for sale in sales if sale.status == "CONFIRMADA"]
+        total = sum((Decimal(sale.total) for sale in confirmed_sales), Decimal(0))
+        payment_totals = {}
+        for sale in confirmed_sales:
+            for payment in sale.payments:
+                if selected_payment and payment.method != selected_payment:
+                    continue
+                payment_totals[payment.method] = payment_totals.get(payment.method, Decimal(0)) + Decimal(payment.amount)
+
+        activities = []
+        losses = []
+        activity_focus = owner_view and bool(selected_action or selected_group)
+        if owner_view:
+            activity_query = AuditEvent.query
+            if start_date:
+                activity_query = activity_query.filter(AuditEvent.created_at >= datetime.combine(start_date, time.min))
+            if end_date:
+                activity_query = activity_query.filter(AuditEvent.created_at < datetime.combine(end_date, time.min) + timedelta(days=1))
+            if selected_user.isdigit():
+                activity_query = activity_query.filter(AuditEvent.user_id == int(selected_user))
+            if selected_action:
+                activity_query = activity_query.filter(AuditEvent.action == selected_action)
+            group_patterns = {
+                "ALTAS": ("CREAR_%",),
+                "MODIFICACIONES": ("EDITAR_%", "CAMBIAR_%", "AJUSTAR_%", "REPOSICION"),
+                "BAJAS": ("ELIMINAR_%", "QUITAR_%", "ANULAR_%", "REGISTRAR_MERMA"),
+                "VENTAS": ("CONFIRMAR_VENTA", "ANULAR_VENTA"),
+                "SESIONES": ("INICIAR_SESION", "CERRAR_SESION"),
+            }
+            patterns = group_patterns.get(selected_group)
+            if patterns:
+                activity_query = activity_query.filter(db.or_(*(AuditEvent.action.like(pattern) for pattern in patterns)))
+            activities = activity_query.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).all()
+            if search:
+                needle = search.casefold()
+                activities = [event for event in activities if needle in " ".join([
+                    event.user.full_name, event.user.username, event.action,
+                    ACTIVITY_LABELS.get(event.action, event.action), event.entity,
+                    event.entity_id, event.details,
+                ]).casefold()]
+
+            if selected_action == "REGISTRAR_MERMA":
+                loss_query = InventoryMovement.query.filter_by(movement_type="MERMA")
+                if start_date:
+                    loss_query = loss_query.filter(InventoryMovement.created_at >= datetime.combine(start_date, time.min))
+                if end_date:
+                    loss_query = loss_query.filter(InventoryMovement.created_at < datetime.combine(end_date, time.min) + timedelta(days=1))
+                if selected_user.isdigit():
+                    loss_query = loss_query.filter(InventoryMovement.user_id == int(selected_user))
+                losses = loss_query.order_by(InventoryMovement.created_at.desc(), InventoryMovement.id.desc()).all()
+                if search:
+                    needle = search.casefold()
+                    losses = [movement for movement in losses if needle in " ".join([
+                        movement.product.name, movement.product.code, movement.user.full_name,
+                        movement.user.username, movement.reason,
+                    ]).casefold()]
+
+        accounts = User.query.order_by(User.last_name, User.first_name, User.username).all() if owner_view else []
+        actions = [row[0] for row in db.session.query(AuditEvent.action).distinct().order_by(AuditEvent.action).all()] if owner_view else []
+        stored_methods = [row[0] for row in db.session.query(Payment.method).distinct().order_by(Payment.method).all()]
+        payment_methods = sorted(set(stored_methods) | {"EFECTIVO", "DEBITO", "CREDITO", "TRANSFERENCIA", "QR"})
         return render_template(
             "report_sales.html",
             total=total,
-            count=confirmed.count(),
-            by_payment=by_payment,
-            daily_summaries=build_daily_sales_summaries(sales),
+            count=len(confirmed_sales),
+            by_payment=sorted(payment_totals.items()),
+            sales=sales,
+            daily_summaries=build_daily_sales_summaries(confirmed_sales),
             today=local_now().strftime("%Y-%m-%d"),
+            owner_view=owner_view, accounts=accounts, activities=activities,
+            activity_focus=activity_focus, losses=losses,
+            activity_labels=ACTIVITY_LABELS, actions=actions, payment_methods=payment_methods,
+            start_value=start_value, end_value=end_value, selected_user=selected_user,
+            selected_payment=selected_payment, selected_status=selected_status,
+            selected_action=selected_action, selected_group=selected_group, search=search,
         )
 
     @app.route("/reports/sales/daily/<report_date>")
