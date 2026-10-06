@@ -143,6 +143,39 @@ dialog menu{display:flex;justify-content:flex-end;gap:10px}
 .customer-actions>form{display:flex;margin:0}
 .customer-actions .button,.customer-actions button.danger{width:76px;min-width:76px;height:30px;min-height:30px;flex-shrink:0;padding:0 9px;font-size:12px;line-height:1.2}
 
+/* Alertas de reposición visibles para dueños y empleados. */
+.products-layout{display:grid;grid-template-columns:minmax(0,1fr) 270px;align-items:start;gap:18px}
+.products-main{min-width:0}
+.low-stock-sidebar{position:sticky;top:18px;background:#fff;border:1px solid #f2cbb1;border-radius:9px;padding:16px;box-shadow:0 2px 8px #15253f0d}
+.low-stock-sidebar h2{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:18px;margin:0 0 8px}
+.low-stock-sidebar h2 span{background:#b42318;color:#fff;border-radius:999px;min-width:28px;padding:3px 7px;text-align:center;font-size:13px}
+.low-stock-sidebar>p{color:#526578;font-size:13px;line-height:1.4;margin:0 0 12px}
+.low-stock-list{list-style:none;margin:0;padding:0;display:grid;gap:10px;max-height:65vh;overflow-y:auto}
+.low-stock-list li{display:grid;gap:4px;padding:10px;border-radius:7px;background:#fff5f1;border:1px solid #f4ddd2;overflow-wrap:anywhere}
+.low-stock-list strong{color:#7f1d1d}.low-stock-list small{color:#667085}.low-stock-list span{font-size:13px;font-weight:700}
+.low-stock-list .button{justify-self:start;margin-top:3px}
+.low-stock-empty{margin-bottom:0!important}
+@media(max-width:900px){.products-layout{grid-template-columns:1fr}.low-stock-sidebar{position:static;grid-row:1}.low-stock-list{max-height:300px}}
+
+/* Solicitudes de descuento que solo puede resolver una cuenta dueño. */
+.pending-discounts{background:#fff7ed;border:1px solid #f6c797;border-radius:8px;padding:16px;margin-bottom:18px}
+.pending-discounts h2{font-size:18px;margin:0 0 10px}
+.pending-discount{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #f6d8b6}
+.pending-discount small,.pending-discount-note{display:block;color:#9a4b08;margin-top:3px}
+.pending-discount .customer-actions{flex-wrap:wrap}
+@media(max-width:760px){.pending-discount{align-items:flex-start;flex-direction:column}}
+.customer-create-panel h2{margin:0}
+.customer-create-panel .customer-create-form{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start;gap:16px 20px}
+.customer-create-form label{min-width:0}
+.customer-create-form label>small{display:block;margin-top:6px;font-size:12px;line-height:1.35;color:#526578}
+.customer-create-form label>.field-error{color:#b42318}
+.customer-create-form button{justify-self:start;align-self:end;min-height:42px;padding:0 20px}
+.customer-records{min-width:0;margin-top:28px}
+.customer-table-scroll table{min-width:760px}
+@media(max-width:900px){.customer-create-panel .customer-create-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.customer-create-panel .customer-create-form{grid-template-columns:1fr}}
+.payment-help{color:#526578;font-size:13px;line-height:1.4;margin:0 0 10px}
+
 .product-code-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}
 .product-code-actions input{min-width:0}
 .product-code-actions button{height:36px;margin-top:5px}
