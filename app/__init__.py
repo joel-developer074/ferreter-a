@@ -243,6 +243,7 @@ class Customer(db.Model):
     debt_balance = db.Column(db.Numeric(14, 2), default=0, nullable=False)
     condition = db.Column(db.String(30), default="Al dia", nullable=False)
     discount_percent = db.Column(db.Numeric(5, 2), default=0, nullable=False)
+    pending_discount_percent = db.Column(db.Numeric(5, 2), nullable=True)
     active = db.Column(db.Boolean, default=True, nullable=False)
 
 
@@ -338,6 +339,9 @@ ACTIVITY_LABELS = {
     "CAMBIAR_PRECIO": "Cambio de precio",
     "ELIMINAR_PRODUCTO": "Baja de producto",
     "CREAR_CLIENTE": "Alta de cliente",
+    "SOLICITAR_DESCUENTO": "Descuento solicitado",
+    "APROBAR_DESCUENTO": "Descuento aprobado",
+    "RECHAZAR_DESCUENTO": "Descuento rechazado",
     "EDITAR_CLIENTE": "Edición de cliente",
     "ELIMINAR_CLIENTE": "Baja de cliente",
     "CREAR_PROVEEDOR": "Alta de proveedor",
@@ -406,7 +410,7 @@ def ensure_schema():
             "has_box_presentation": "BOOLEAN NOT NULL DEFAULT 0",
             "image_filename": "VARCHAR(100)",
         },
-        "customer": {"discount_percent": "NUMERIC(5,2) NOT NULL DEFAULT 0", "first_name": "VARCHAR(100) NOT NULL DEFAULT ''", "last_name": "VARCHAR(100) NOT NULL DEFAULT ''", "dni": "VARCHAR(30)", "address": "VARCHAR(250) NOT NULL DEFAULT ''", "debt_balance": "NUMERIC(14,2) NOT NULL DEFAULT 0"},
+        "customer": {"discount_percent": "NUMERIC(5,2) NOT NULL DEFAULT 0", "pending_discount_percent": "NUMERIC(5,2)", "first_name": "VARCHAR(100) NOT NULL DEFAULT ''", "last_name": "VARCHAR(100) NOT NULL DEFAULT ''", "dni": "VARCHAR(30)", "address": "VARCHAR(250) NOT NULL DEFAULT ''", "debt_balance": "NUMERIC(14,2) NOT NULL DEFAULT 0"},
         "supplier": {"company_name": "VARCHAR(160) NOT NULL DEFAULT ''"},
         "sale_item": {"presentation": "VARCHAR(20)", "sale_quantity": "NUMERIC(14,3)", "discount_percent": "NUMERIC(5,2) NOT NULL DEFAULT 0"},
         "sale": {"cash_received": "NUMERIC(14,2) NOT NULL DEFAULT 0", "change_due": "NUMERIC(14,2) NOT NULL DEFAULT 0"},
@@ -613,7 +617,10 @@ def create_app(test_config=None):
             pattern = f"%{query}%"
             products_query = products_query.filter(db.or_(Product.name.ilike(pattern), Product.code.ilike(pattern)))
         template = "_product_table.html" if request.args.get("partial") == "1" else "products.html"
-        return render_template(template, products=alphabetical(products_query), query=query)
+        return render_template(
+            template, products=alphabetical(products_query), query=query,
+            low_stock_products=alphabetical(Product.query.filter(Product.is_stock_critical)) if template == "products.html" else [],
+        )
 
     @app.route("/products/<int:product_id>/barcode")
     @login_required
@@ -626,12 +633,12 @@ def create_app(test_config=None):
         return render_template("product_barcode.html", product=product, barcode_image=image, barcode_error=None)
 
     @app.route("/products/generate-code")
-    @owner_required
+    @login_required
     def product_generate_code():
         return {"code": generate_unique_product_code()}
 
     @app.route("/products/new", methods=["GET", "POST"])
-    @owner_required
+    @login_required
     def product_new():
         form_data, field_errors = {}, {}
         if request.method == "POST":
@@ -736,7 +743,7 @@ def create_app(test_config=None):
         return redirect(url_for("products"))
 
     @app.route("/products/<int:product_id>/loss", methods=["GET", "POST"])
-    @owner_required
+    @login_required
     def product_loss(product_id):
         product = db.get_or_404(Product, product_id)
         if not product.active:
@@ -801,7 +808,7 @@ def create_app(test_config=None):
         return render_template("product_loss_form.html", product=product, form_data=form_data)
 
     @app.route("/products/<int:product_id>/restock", methods=["GET", "POST"])
-    @owner_required
+    @login_required
     def product_restock(product_id):
         product = db.get_or_404(Product, product_id)
         form_data = {}
@@ -969,17 +976,21 @@ def create_app(test_config=None):
         if request.method == "POST":
             form_data = request.form.to_dict()
             try:
-                discount = Decimal(request.form.get("discount_percent", 0))
-                if not 0 <= discount <= 100: raise ValueError("El descuento debe estar entre 0 y 100")
+                discount = Decimal(request.form.get("discount_percent") or 0)
+                if not discount.is_finite() or not 0 <= discount <= 100: raise ValueError("El descuento debe estar entre 0 y 100")
                 first_name = request.form["first_name"].strip()
                 last_name = request.form["last_name"].strip()
                 dni = request.form.get("dni", "").strip() or None
                 if not first_name or not last_name: raise ValueError("Nombre y apellido son obligatorios")
                 if dni and Customer.query.filter_by(dni=dni).first(): field_errors["dni"] = "Ya existe un cliente con este DNI."
                 if field_errors: raise ValueError("Revise los campos marcados.")
-                customer = Customer(name=f"{last_name}, {first_name}", first_name=first_name, last_name=last_name, dni=dni, phone=request.form.get("phone", "").strip(), address=request.form.get("address", "").strip(), condition=request.form.get("condition", "Al dia"), discount_percent=discount)
+                needs_approval = current_user().role != "owner" and discount > 0
+                customer = Customer(name=f"{last_name}, {first_name}", first_name=first_name, last_name=last_name, dni=dni, phone=request.form.get("phone", "").strip(), address=request.form.get("address", "").strip(), condition=request.form.get("condition", "Al dia"), discount_percent=0 if needs_approval else discount, pending_discount_percent=discount if needs_approval else None)
                 db.session.add(customer); db.session.flush(); audit(current_user(), "CREAR_CLIENTE", "customer", customer.id, customer.name)
-                db.session.commit(); flash("Cliente agregado.", "success")
+                if needs_approval:
+                    audit(current_user(), "SOLICITAR_DESCUENTO", "customer", customer.id, f"{customer.name}: {discount}% pendiente de aprobación")
+                db.session.commit()
+                flash("Cliente agregado. El descuento quedará pendiente hasta que lo apruebe una cuenta dueño." if needs_approval else "Cliente agregado.", "success")
             except Exception as exc:
                 current_app.logger.exception("Error al procesar %s", request.path)
                 db.session.rollback(); flash(f"No se pudo agregar el cliente: {exc}", "error")
@@ -1001,6 +1012,30 @@ def create_app(test_config=None):
             flash(f"No se pudo eliminar el cliente: {exc}", "error")
         return redirect(url_for("customers"))
 
+    @app.route("/customers/<int:customer_id>/discount", methods=["POST"])
+    @owner_required
+    def customer_discount_approval(customer_id):
+        customer = db.get_or_404(Customer, customer_id)
+        if not customer.active or customer.pending_discount_percent is None:
+            flash("Este cliente no tiene un descuento pendiente de aprobación.", "error")
+            return redirect(url_for("customers"))
+        decision = request.form.get("decision")
+        if decision not in {"approve", "reject"}:
+            abort(400)
+        requested = customer.pending_discount_percent
+        if decision == "approve":
+            customer.discount_percent = requested
+            action = "APROBAR_DESCUENTO"
+            message = "Descuento aprobado y aplicado al cliente."
+        else:
+            action = "RECHAZAR_DESCUENTO"
+            message = "Descuento rechazado. El cliente conserva su descuento actual."
+        customer.pending_discount_percent = None
+        audit(current_user(), action, "customer", customer.id, f"{customer.name}: {requested}%")
+        db.session.commit()
+        flash(message, "success")
+        return redirect(url_for("customers"))
+
     @app.route("/customers/<int:customer_id>/edit", methods=["GET", "POST"])
     @owner_required
     def customer_edit(customer_id):
@@ -1010,8 +1045,10 @@ def create_app(test_config=None):
                 customer.first_name = request.form["first_name"].strip(); customer.last_name = request.form["last_name"].strip()
                 customer.name = f"{customer.last_name}, {customer.first_name}"; customer.phone = request.form.get("phone", "").strip(); customer.address = request.form.get("address", "").strip()
                 discount = Decimal(request.form.get("discount_percent") or 0)
-                if not 0 <= discount <= 100: raise ValueError("El descuento debe estar entre 0 y 100")
-                customer.discount_percent = discount; audit(current_user(), "EDITAR_CLIENTE", "customer", customer.id, customer.name)
+                if not discount.is_finite() or not 0 <= discount <= 100: raise ValueError("El descuento debe estar entre 0 y 100")
+                customer.discount_percent = discount
+                customer.pending_discount_percent = None
+                audit(current_user(), "EDITAR_CLIENTE", "customer", customer.id, customer.name)
                 db.session.commit(); flash("Cliente actualizado.", "success"); return redirect(url_for("customers"))
             except Exception as exc:
                 current_app.logger.exception("Error al procesar %s", request.path)
@@ -1063,12 +1100,22 @@ def create_app(test_config=None):
                 db.session.add(InventoryMovement(product_id=product.id, user_id=current_user().id, quantity=-quantity, movement_type="VENTA", reason=f"Venta {presentation.lower()}", reference=f"V-{sale.id}"))
             allowed_methods = {"EFECTIVO", "DEBITO", "CREDITO", "TRANSFERENCIA", "QR"}
             parsed_payments = []
+            unspecified_methods = []
             for payment in payments:
-                method = payment["method"]
-                amount = money(payment["amount"])
+                method = payment.get("method")
                 if method not in allowed_methods: raise ValueError("Medio de pago inválido")
-                if amount <= 0: raise ValueError("Los importes de pago deben ser mayores a cero")
+                raw_amount = payment.get("amount")
+                if raw_amount is None or str(raw_amount).strip() == "":
+                    unspecified_methods.append(method)
+                    continue
+                amount = money(raw_amount)
+                if not amount.is_finite() or amount <= 0: raise ValueError("Los importes de pago deben ser mayores a cero")
                 parsed_payments.append([method, amount])
+            explicit_total = sum((amount for _, amount in parsed_payments), Decimal(0))
+            if explicit_total < total and unspecified_methods:
+                if len(unspecified_methods) > 1:
+                    raise ValueError("Si usás varios medios de pago, dejá un solo importe vacío para completar el saldo restante.")
+                parsed_payments.append([unspecified_methods[0], (total - explicit_total).quantize(Decimal("0.01"))])
             paid = sum((amount for _, amount in parsed_payments), Decimal(0))
             if paid < total: raise ValueError(f"Pago insuficiente. Faltan {(total - paid):.2f}")
             change_due = (paid - total).quantize(Decimal("0.01"))
